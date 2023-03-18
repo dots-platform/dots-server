@@ -2,6 +2,7 @@ TARGET_DIR = cmd/dotsserver
 TARGET = $(TARGET_DIR)/dotsserver
 SRC_DIRS = \
 	cmd \
+	internal \
 	protos
 SRCS = $(wildcard \
 		$(patsubst %,%/*.go,$(SRC_DIRS)) \
