@@ -56,3 +56,25 @@ func (s *DotsServerGrpc) UploadBlob(ctx context.Context, blob *dotspb.Blob) (*do
 
 	return &dotspb.Result{Result: "success"}, nil
 }
+
+func (s *DotsServerGrpc) RetrieveBlob(ctx context.Context, blob *dotspb.Blob) (*dotspb.Blob, error) {
+	// Attempt to read blob data.
+	blobPath := path.Join(s.config.FileStorageDir, s.nodeId, blob.GetClientId(), blob.GetKey())
+	blobData, err := os.ReadFile(blobPath)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			log.WithFields(log.Fields{
+				"blobPath": blobPath,
+				"err":      err,
+			}).Error("Error reading blob contents")
+			return nil, grpc.Errorf(codes.Internal, internalErrMsg)
+		}
+
+		// Handle not found error.
+		return nil, grpc.Errorf(codes.NotFound, "Blob with key not found")
+	}
+
+	blob.Val = blobData
+
+	return blob, nil
+}
