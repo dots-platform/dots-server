@@ -48,7 +48,13 @@ func main() {
 		}).Fatal("Failed to listen")
 	}
 	grpcServer := grpc.NewServer()
-	dotspb.RegisterDecExecServer(grpcServer, &dotsservergrpc.DotsServerGrpc{})
+	dotsServer, err := dotsservergrpc.NewDotsServerGrpc(nodeId, config)
+	if err != nil {
+		log.WithFields(log.Fields{
+			"err": err,
+		}).Fatal("Failed to instantiate DoTS server")
+	}
+	dotspb.RegisterDecExecServer(grpcServer, dotsServer)
 
 	// Listen.
 	if err := grpcServer.Serve(conn); err != nil {

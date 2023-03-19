@@ -17,8 +17,9 @@ type AppConfig struct {
 }
 
 type Config struct {
-	Nodes map[string]*NodeConfig `yaml:"nodes"`
-	Apps  map[string]*AppConfig  `yaml:"apps"`
+	Nodes          map[string]*NodeConfig `yaml:"nodes"`
+	Apps           map[string]*AppConfig  `yaml:"apps"`
+	FileStorageDir string                 `yaml:"file_storage_dir"`
 }
 
 func ReadConfig(configPath string) (*Config, error) {
