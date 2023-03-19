@@ -2,9 +2,9 @@ package main
 
 import (
 	"flag"
-	"log"
 	"net"
 
+	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 
 	"github.com/dtrust-project/dtrust-server/internal/config"
@@ -27,25 +27,33 @@ func main() {
 	// Get config.
 	config, err := config.ReadConfig(configPath)
 	if err != nil {
-		log.Fatalf("Error reading config: %v", err)
+		log.WithFields(log.Fields{
+			"err": err,
+		}).Fatal("Error reading config")
 	}
 
 	// Get our node's config.
 	nodeConfig, ok := config.Nodes[nodeId]
 	if !ok {
-		log.Fatalf("Node ID not present in config nodes: %s", nodeId)
+		log.WithFields(log.Fields{
+			"nodeId": nodeId,
+		}).Fatal("Node ID not present in config nodes")
 	}
 
 	// Spawn gRPC server.
 	conn, err := net.Listen("tcp", nodeConfig.Addr)
 	if err != nil {
-		log.Fatalf("Failed to listen: %v", err)
+		log.WithFields(log.Fields{
+			"err": err,
+		}).Fatal("Failed to listen")
 	}
 	grpcServer := grpc.NewServer()
 	dotspb.RegisterDecExecServer(grpcServer, &dotsservergrpc.DotsServerGrpc{})
 
 	// Listen.
 	if err := grpcServer.Serve(conn); err != nil {
-		log.Fatalf("Failed to serve: %v", err)
+		log.WithFields(log.Fields{
+			"err": err,
+		}).Fatal("Failed to server")
 	}
 }
