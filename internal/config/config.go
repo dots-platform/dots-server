@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"io/ioutil"
+	"sort"
 
 	"gopkg.in/yaml.v3"
 )
@@ -17,6 +18,7 @@ type AppConfig struct {
 }
 
 type Config struct {
+	NodeRanks      map[string]int
 	Nodes          map[string]*NodeConfig `yaml:"nodes"`
 	Apps           map[string]*AppConfig  `yaml:"apps"`
 	FileStorageDir string                 `yaml:"file_storage_dir"`
@@ -63,6 +65,17 @@ func ReadConfig(configPath string) (*Config, error) {
 				}
 			}
 		}
+	}
+
+	// Generate ranks for node IDs.
+	nodeIds := make([]string, 0, len(config.Nodes))
+	for nodeId := range config.Nodes {
+		nodeIds = append(nodeIds, nodeId)
+	}
+	sort.Strings(nodeIds)
+	config.NodeRanks = make(map[string]int)
+	for i, nodeId := range nodeIds {
+		config.NodeRanks[nodeId] = i
 	}
 
 	return &config, nil
