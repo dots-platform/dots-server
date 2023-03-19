@@ -5,6 +5,7 @@ go 1.19
 require (
 	google.golang.org/grpc v1.53.0
 	google.golang.org/protobuf v1.30.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
