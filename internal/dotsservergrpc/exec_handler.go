@@ -9,6 +9,7 @@ import (
 	"path"
 	"strconv"
 
+	"github.com/avast/retry-go"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -65,12 +66,19 @@ func (s *DotsServerGrpc) Exec(ctx context.Context, app *dotspb.App) (*dotspb.Res
 				}
 			} else {
 				// Act as dialer for lower ranks.
-				c, err := dialer.DialContext(ctx, "tcp", fmt.Sprintf(":%d", nodeConfig.Ports[ourRank]))
-				if err != nil {
+				if err := retry.Do(
+					func() error {
+						c, err := dialer.DialContext(ctx, "tcp", fmt.Sprintf(":%d", nodeConfig.Ports[ourRank]))
+						if err != nil {
+							return err
+						}
+						conn = c
+						return nil
+					},
+					retry.Context(ctx),
+				); err != nil {
 					errChan <- err
-					return
 				}
-				conn = c
 			}
 
 			// Extract socket and output.
