@@ -200,6 +200,7 @@ func (s *DotsServerGrpc) Exec(ctx context.Context, app *dotspb.App) (*dotspb.Res
 			}
 		}
 		defer controlSocket.Close()
+		s.manageControlSocket(ctx, app.GetAppName(), app.GetFuncName(), controlSocket.(*net.UnixConn))
 	}()
 
 	// Generate input for DoTS app environment. Per https://pkg.go.dev/os/exec,

@@ -18,6 +18,7 @@ type AppConfig struct {
 }
 
 type Config struct {
+	NodeIds        []string
 	NodeRanks      map[string]int
 	Nodes          map[string]*NodeConfig `yaml:"nodes"`
 	Apps           map[string]*AppConfig  `yaml:"apps"`
@@ -68,13 +69,13 @@ func ReadConfig(configPath string) (*Config, error) {
 	}
 
 	// Generate ranks for node IDs.
-	nodeIds := make([]string, 0, len(config.Nodes))
+	config.NodeIds = make([]string, 0, len(config.Nodes))
 	for nodeId := range config.Nodes {
-		nodeIds = append(nodeIds, nodeId)
+		config.NodeIds = append(config.NodeIds, nodeId)
 	}
-	sort.Strings(nodeIds)
+	sort.Strings(config.NodeIds)
 	config.NodeRanks = make(map[string]int)
-	for i, nodeId := range nodeIds {
+	for i, nodeId := range config.NodeIds {
 		config.NodeRanks[nodeId] = i
 	}
 
