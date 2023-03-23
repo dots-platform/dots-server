@@ -1,6 +1,7 @@
 package dotsservergrpc
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -8,13 +9,47 @@ import (
 	"io"
 	"net"
 	"os"
-	"strconv"
-	"strings"
 	"syscall"
 
 	"github.com/avast/retry-go"
 	log "github.com/sirupsen/logrus"
 )
+
+const ControlMsgSize = 64
+
+type ControlMsgType uint16
+
+const (
+	ControlMsgTypeRequestSocket ControlMsgType = 1
+)
+
+func (t ControlMsgType) validate() error {
+	if t < 1 || t > 1 {
+		return errors.New("Invalid value for ControlMsgType")
+	}
+	return nil
+}
+
+func (t ControlMsgType) String() string {
+	switch t {
+	case ControlMsgTypeRequestSocket:
+		return "REQUEST_SOCKET"
+	default:
+		panic("Unknown control message type")
+	}
+}
+
+type ControlMsg struct {
+	Type       ControlMsgType
+	_          uint16
+	PayloadLen uint32
+	_          uint64
+	Data       [48]byte
+}
+
+type ControlMsgDataRequestSocket struct {
+	OtherRank uint32
+}
 
 func sendFile(ctx context.Context, controlSocket *net.UnixConn, file *os.File) error {
 	controlFile, err := controlSocket.File()
@@ -31,32 +66,15 @@ func sendFile(ctx context.Context, controlSocket *net.UnixConn, file *os.File) e
 	return nil
 }
 
-func (s *DotsServerGrpc) handleRequestSocketControlMsg(ctx context.Context, controlSocket *net.UnixConn, cmd []string, cmdLog log.FieldLogger) {
-	if len(cmd) != 3 {
-		cmdLog.Warn("Application issued invalid command")
-		return
-	}
-	firstRank, err := strconv.Atoi(cmd[1])
-	if err != nil {
-		cmdLog.Warn("Application issued invalid command")
-		return
-	}
-	secondRank, err := strconv.Atoi(cmd[2])
-	if err != nil {
-		cmdLog.Warn("Application issued invalid command")
-		return
+func (s *DotsServerGrpc) handleRequestSocketControlMsg(ctx context.Context, controlSocket *net.UnixConn, controlMsg *ControlMsg, cmdLog log.FieldLogger) {
+	var data ControlMsgDataRequestSocket
+	dataReader := bytes.NewReader(controlMsg.Data[:])
+	if err := binary.Read(dataReader, binary.BigEndian, &data); err != nil {
+		cmdLog.WithError(err).Error("Failed to unmarshal binary data")
 	}
 
 	ourRank := s.config.NodeRanks[s.nodeId]
-	var otherRank int
-	if firstRank != ourRank && secondRank != ourRank || firstRank == ourRank && secondRank == ourRank {
-		cmdLog.Warn("Application issued invalid command")
-		return
-	} else if firstRank == ourRank {
-		otherRank = secondRank
-	} else {
-		otherRank = firstRank
-	}
+	otherRank := int(data.OtherRank)
 
 	// Construct TCP socket.
 	var conn net.Conn
@@ -114,45 +132,30 @@ func (s *DotsServerGrpc) manageControlSocket(ctx context.Context, appName string
 		"appFuncName": funcName,
 	})
 
-	lenBuf := make([]byte, 4)
 	for {
-		// Read length.
-		bytesRead, err := controlSocket.Read(lenBuf)
-		if err != nil {
+		// Read header.
+		var controlMsg ControlMsg
+		if err := binary.Read(controlSocket, binary.BigEndian, &controlMsg); err != nil {
 			if errors.Is(err, io.EOF) {
 				break
 			}
-			execLog.WithError(err).Error("Failed to read control message length")
+			execLog.WithError(err).Error("Failed to read control message")
 			break
 		}
-		if bytesRead < 4 {
-			execLog.WithError(err).Warn("Application control message length corrupted")
+		if err := controlMsg.Type.validate(); err != nil {
+			execLog.WithError(err).Warn("Application issued invalid command type")
 			break
-		}
-		msgLen := binary.BigEndian.Uint32(lenBuf)
-
-		// Read message.
-		msgBuf := make([]byte, msgLen)
-		controlSocket.Read(msgBuf)
-
-		// Split message into arguments.
-		cmd := strings.Split(string(msgBuf), " ")
-		if len(cmd) < 1 {
-			execLog.Warn("Application issued empty command")
 		}
 
 		cmdLog := execLog.WithFields(log.Fields{
-			"command": cmd,
+			"command": controlMsg.Type.String(),
 		})
-
 		cmdLog.Debug("Received control command")
 
 		// Dispatch command.
-		switch cmd[0] {
-		case "REQUEST_SOCKET":
-			s.handleRequestSocketControlMsg(ctx, controlSocket, cmd, cmdLog)
-		default:
-			cmdLog.Warn("Application issued invalid command")
+		switch controlMsg.Type {
+		case ControlMsgTypeRequestSocket:
+			s.handleRequestSocketControlMsg(ctx, controlSocket, &controlMsg, cmdLog)
 		}
 	}
 }
