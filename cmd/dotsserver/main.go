@@ -27,39 +27,29 @@ func main() {
 	// Get config.
 	config, err := config.ReadConfig(configPath)
 	if err != nil {
-		log.WithFields(log.Fields{
-			"err": err,
-		}).Fatal("Error reading config")
+		log.WithError(err).Fatal("Error reading config")
 	}
 
 	// Get our node's config.
 	nodeConfig, ok := config.Nodes[nodeId]
 	if !ok {
-		log.WithFields(log.Fields{
-			"nodeId": nodeId,
-		}).Fatal("Node ID not present in config nodes")
+		log.WithError(err).Fatal("Node ID not present in config nodes")
 	}
 
 	// Spawn gRPC server.
 	conn, err := net.Listen("tcp", nodeConfig.Addr)
 	if err != nil {
-		log.WithFields(log.Fields{
-			"err": err,
-		}).Fatal("Failed to listen")
+		log.WithError(err).Fatal("Failed to listen")
 	}
 	grpcServer := grpc.NewServer()
 	dotsServer, err := dotsservergrpc.NewDotsServerGrpc(nodeId, config)
 	if err != nil {
-		log.WithFields(log.Fields{
-			"err": err,
-		}).Fatal("Failed to instantiate DoTS server")
+		log.WithError(err).Fatal("Failed to instantiate DoTS server")
 	}
 	dotspb.RegisterDecExecServer(grpcServer, dotsServer)
 
 	// Listen.
 	if err := grpcServer.Serve(conn); err != nil {
-		log.WithFields(log.Fields{
-			"err": err,
-		}).Fatal("Failed to server")
+		log.WithError(err).Fatal("Failed to server")
 	}
 }

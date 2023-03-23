@@ -18,8 +18,7 @@ func (s *DotsServerGrpc) UploadBlob(ctx context.Context, blob *dotspb.Blob) (*do
 	if err := os.MkdirAll(blobDir, 0755); err != nil {
 		log.WithFields(log.Fields{
 			"blobDir": blobDir,
-			"err":     err,
-		}).Error("Error creating blob directory")
+		}).WithError(err).Error("Error creating blob directory")
 		return nil, grpc.Errorf(codes.Internal, internalErrMsg)
 	}
 
@@ -28,8 +27,7 @@ func (s *DotsServerGrpc) UploadBlob(ctx context.Context, blob *dotspb.Blob) (*do
 	if err := os.WriteFile(blobPath, blob.GetVal(), 0644); err != nil {
 		log.WithFields(log.Fields{
 			"blobPath": blobPath,
-			"err":      err,
-		}).Error("Error writing blob contents")
+		}).WithError(err).Error("Error writing blob contents")
 		return nil, grpc.Errorf(codes.Internal, internalErrMsg)
 	}
 
@@ -44,8 +42,7 @@ func (s *DotsServerGrpc) RetrieveBlob(ctx context.Context, blob *dotspb.Blob) (*
 		if !os.IsNotExist(err) {
 			log.WithFields(log.Fields{
 				"blobPath": blobPath,
-				"err":      err,
-			}).Error("Error reading blob contents")
+			}).WithError(err).Error("Error reading blob contents")
 			return nil, grpc.Errorf(codes.Internal, internalErrMsg)
 		}
 

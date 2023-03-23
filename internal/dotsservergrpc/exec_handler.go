@@ -106,9 +106,7 @@ func (s *DotsServerGrpc) Exec(ctx context.Context, app *dotspb.App) (*dotspb.Res
 			sockets[s.rank] = socket
 		case err := <-errChan:
 			loopErr = err
-			execLog.WithFields(log.Fields{
-				"err": err,
-			}).Error("Error opening application socket")
+			execLog.WithError(err).Error("Error opening application socket")
 		}
 	}
 	if loopErr != nil {
@@ -124,8 +122,7 @@ func (s *DotsServerGrpc) Exec(ctx context.Context, app *dotspb.App) (*dotspb.Res
 			if !os.IsNotExist(err) {
 				execLog.WithFields(log.Fields{
 					"blobPath": inputPath,
-					"err":      err,
-				}).Error("Error opening input file")
+				}).WithError(err).Error("Error opening input file")
 				return nil, grpc.Errorf(codes.Internal, internalErrMsg)
 			}
 
@@ -145,8 +142,7 @@ func (s *DotsServerGrpc) Exec(ctx context.Context, app *dotspb.App) (*dotspb.Res
 			if !os.IsNotExist(err) {
 				execLog.WithFields(log.Fields{
 					"blobPath": outputPath,
-					"err":      err,
-				}).Error("Error opening output file")
+				}).WithError(err).Error("Error opening output file")
 				return nil, grpc.Errorf(codes.Internal, internalErrMsg)
 			}
 
@@ -164,9 +160,7 @@ func (s *DotsServerGrpc) Exec(ctx context.Context, app *dotspb.App) (*dotspb.Res
 	cmd.ExtraFiles = append(cmd.ExtraFiles, sockets...)
 	stdin, err := cmd.StdinPipe()
 	if err := cmd.Start(); err != nil {
-		execLog.WithFields(log.Fields{
-			"err": err,
-		}).Error("Error starting application")
+		execLog.WithError(err).Error("Error starting application")
 		return nil, grpc.Errorf(codes.Internal, "Application error")
 	}
 	defer cmd.Process.Kill()
@@ -176,9 +170,7 @@ func (s *DotsServerGrpc) Exec(ctx context.Context, app *dotspb.App) (*dotspb.Res
 	os.Remove(controlSocketPath)
 	controlConn, err := listenConfig.Listen(ctx, "unix", controlSocketPath)
 	if err != nil {
-		execLog.WithFields(log.Fields{
-			"err": err,
-		}).Error("Error creating control socket listener")
+		execLog.WithError(err).Error("Error creating control socket listener")
 		return nil, grpc.Errorf(codes.Internal, "Application error")
 	}
 	defer os.Remove(controlSocketPath)
@@ -193,9 +185,7 @@ func (s *DotsServerGrpc) Exec(ctx context.Context, app *dotspb.App) (*dotspb.Res
 			case <-ctx.Done():
 				return
 			default:
-				execLog.WithFields(log.Fields{
-					"err": err,
-				}).Error("Error accepting control socket connection")
+				execLog.WithError(err).Error("Error accepting control socket connection")
 				return
 			}
 		}
@@ -237,23 +227,17 @@ func (s *DotsServerGrpc) Exec(ctx context.Context, app *dotspb.App) (*dotspb.Res
 
 	// Write environment to stdin.
 	if err != nil {
-		execLog.WithFields(log.Fields{
-			"err": err,
-		}).Error("Error opening application stdin pipe")
+		execLog.WithError(err).Error("Error opening application stdin pipe")
 		return nil, grpc.Errorf(codes.Internal, internalErrMsg)
 	}
 	if _, err := stdin.Write([]byte(dotsEnvInput)); err != nil {
-		execLog.WithFields(log.Fields{
-			"err": err,
-		}).Error("Error writing environment to application stdin")
+		execLog.WithError(err).Error("Error writing environment to application stdin")
 		return nil, grpc.Errorf(codes.Internal, internalErrMsg)
 	}
 
 	// Wait for application to finish.
 	if err := cmd.Wait(); err != nil {
-		execLog.WithFields(log.Fields{
-			"err": err,
-		}).Warn("Application exited with non-zero return code")
+		execLog.WithError(err).Warn("Application exited with non-zero return code")
 		return nil, grpc.Errorf(codes.Internal, "Application error")
 	}
 

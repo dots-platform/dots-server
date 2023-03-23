@@ -67,17 +67,13 @@ func (s *DotsServerGrpc) handleRequestSocketControlMsg(ctx context.Context, cont
 		var listenConfig net.ListenConfig
 		listener, err := listenConfig.Listen(ctx, "tcp", fmt.Sprintf(":%d", ourConfig.Ports[otherRank]))
 		if err != nil {
-			cmdLog.WithFields(log.Fields{
-				"err": err,
-			}).Error("Failed to listen")
+			cmdLog.WithError(err).Error("Failed to listen")
 			return
 		}
 		defer listener.Close()
 		conn, err = listener.Accept()
 		if err != nil {
-			cmdLog.WithFields(log.Fields{
-				"err": err,
-			}).Error("Failed to listen")
+			cmdLog.WithError(err).Error("Failed to listen")
 			return
 		}
 	} else {
@@ -94,9 +90,7 @@ func (s *DotsServerGrpc) handleRequestSocketControlMsg(ctx context.Context, cont
 			},
 			retry.Context(ctx),
 		); err != nil {
-			cmdLog.WithFields(log.Fields{
-				"err": err,
-			}).Error("Failed to dial")
+			cmdLog.WithError(err).Error("Failed to dial")
 		}
 	}
 	defer conn.Close()
@@ -104,16 +98,12 @@ func (s *DotsServerGrpc) handleRequestSocketControlMsg(ctx context.Context, cont
 	// Pass socket through control socket.
 	file, err := conn.(*net.TCPConn).File()
 	if err != nil {
-		cmdLog.WithFields(log.Fields{
-			"err": err,
-		}).Error("Failed to get TCP file")
+		cmdLog.WithError(err).Error("Failed to get TCP file")
 		return
 	}
 	defer file.Close()
 	if err := sendFile(ctx, controlSocket, file); err != nil {
-		cmdLog.WithFields(log.Fields{
-			"err": err,
-		}).Error("Failed to get send TCP through control socket")
+		cmdLog.WithError(err).Error("Failed to get send TCP through control socket")
 		return
 	}
 }
@@ -132,15 +122,11 @@ func (s *DotsServerGrpc) manageControlSocket(ctx context.Context, appName string
 			if errors.Is(err, io.EOF) {
 				break
 			}
-			execLog.WithFields(log.Fields{
-				"err": err,
-			}).Error("Failed to read control message length")
+			execLog.WithError(err).Error("Failed to read control message length")
 			break
 		}
 		if bytesRead < 4 {
-			execLog.WithFields(log.Fields{
-				"err": err,
-			}).Warn("Application control message length corrupted")
+			execLog.WithError(err).Warn("Application control message length corrupted")
 			break
 		}
 		msgLen := binary.BigEndian.Uint32(lenBuf)
