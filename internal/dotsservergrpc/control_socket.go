@@ -43,8 +43,8 @@ type ControlMsg struct {
 	Type       ControlMsgType
 	_          uint16
 	PayloadLen uint32
-	_          uint64
-	Data       [48]byte
+	_          [24]byte
+	Data       [32]byte
 }
 
 type ControlMsgDataRequestSocket struct {
