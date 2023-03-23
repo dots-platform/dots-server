@@ -25,24 +25,18 @@ func main() {
 	}
 
 	// Get config.
-	config, err := config.ReadConfig(configPath)
+	conf, err := config.ReadConfig(configPath, nodeId)
 	if err != nil {
 		log.WithError(err).Fatal("Error reading config")
 	}
 
-	// Get our node's config.
-	nodeConfig, ok := config.Nodes[nodeId]
-	if !ok {
-		log.WithError(err).Fatal("Node ID not present in config nodes")
-	}
-
 	// Spawn gRPC server.
-	conn, err := net.Listen("tcp", nodeConfig.Addr)
+	conn, err := net.Listen("tcp", conf.OurNodeConfig.Addr)
 	if err != nil {
 		log.WithError(err).Fatal("Failed to listen")
 	}
 	grpcServer := grpc.NewServer()
-	dotsServer, err := dotsservergrpc.NewDotsServerGrpc(nodeId, config)
+	dotsServer, err := dotsservergrpc.NewDotsServerGrpc(nodeId, conf)
 	if err != nil {
 		log.WithError(err).Fatal("Failed to instantiate DoTS server")
 	}

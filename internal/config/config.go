@@ -18,14 +18,19 @@ type AppConfig struct {
 }
 
 type Config struct {
-	NodeIds        []string
-	NodeRanks      map[string]int
-	Nodes          map[string]*NodeConfig `yaml:"nodes"`
-	Apps           map[string]*AppConfig  `yaml:"apps"`
-	FileStorageDir string                 `yaml:"file_storage_dir"`
+	NodeIds   []string
+	NodeRanks map[string]int
+	Nodes     map[string]*NodeConfig `yaml:"nodes"`
+
+	Apps           map[string]*AppConfig `yaml:"apps"`
+	FileStorageDir string                `yaml:"file_storage_dir"`
+
+	OurNodeId     string
+	OurNodeRank   int
+	OurNodeConfig *NodeConfig
 }
 
-func ReadConfig(configPath string) (*Config, error) {
+func ReadConfig(configPath string, ourNodeId string) (*Config, error) {
 	// Read config bytes.
 	configBytes, err := ioutil.ReadFile(configPath)
 	if err != nil {
@@ -78,6 +83,15 @@ func ReadConfig(configPath string) (*Config, error) {
 	for i, nodeId := range config.NodeIds {
 		config.NodeRanks[nodeId] = i
 	}
+
+	// Get our node rank and config.
+	var ok bool
+	config.OurNodeId = ourNodeId
+	config.OurNodeRank, ok = config.NodeRanks[ourNodeId]
+	if !ok {
+		return nil, errors.New("Node ID not present in config nodes")
+	}
+	config.OurNodeConfig = config.Nodes[ourNodeId]
 
 	return &config, nil
 }

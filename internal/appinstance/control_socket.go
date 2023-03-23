@@ -1,4 +1,4 @@
-package dotsservergrpc
+package appinstance
 
 import (
 	"bytes"
@@ -66,20 +66,20 @@ func sendFile(ctx context.Context, controlSocket *net.UnixConn, file *os.File) e
 	return nil
 }
 
-func (s *DotsServerGrpc) handleRequestSocketControlMsg(ctx context.Context, controlSocket *net.UnixConn, controlMsg *ControlMsg, cmdLog log.FieldLogger) {
+func (instance *AppInstance) handleRequestSocketControlMsg(ctx context.Context, controlSocket *net.UnixConn, controlMsg *ControlMsg, cmdLog log.FieldLogger) {
 	var data ControlMsgDataRequestSocket
 	dataReader := bytes.NewReader(controlMsg.Data[:])
 	if err := binary.Read(dataReader, binary.BigEndian, &data); err != nil {
 		cmdLog.WithError(err).Error("Failed to unmarshal binary data")
 	}
 
-	ourRank := s.config.NodeRanks[s.nodeId]
+	ourRank := instance.config.NodeRanks[instance.config.OurNodeId]
 	otherRank := int(data.OtherRank)
 
 	// Construct TCP socket.
 	var conn net.Conn
-	ourConfig := s.config.Nodes[s.nodeId]
-	otherConfig := s.config.Nodes[s.config.NodeIds[otherRank]]
+	ourConfig := instance.config.Nodes[instance.config.OurNodeId]
+	otherConfig := instance.config.Nodes[instance.config.NodeIds[otherRank]]
 	if ourRank < otherRank {
 		// Act as the listener for higher ranks.
 		var listenConfig net.ListenConfig
@@ -126,7 +126,7 @@ func (s *DotsServerGrpc) handleRequestSocketControlMsg(ctx context.Context, cont
 	}
 }
 
-func (s *DotsServerGrpc) manageControlSocket(ctx context.Context, appName string, funcName string, controlSocket *net.UnixConn) {
+func (instance *AppInstance) manageControlSocket(ctx context.Context, appName string, funcName string, controlSocket *net.UnixConn) {
 	execLog := log.WithFields(log.Fields{
 		"appName":     appName,
 		"appFuncName": funcName,
@@ -147,6 +147,18 @@ func (s *DotsServerGrpc) manageControlSocket(ctx context.Context, appName string
 			break
 		}
 
+		// Read payload.
+		var payload []byte
+		if controlMsg.PayloadLen > 0 {
+			payload = make([]byte, controlMsg.PayloadLen)
+			if _, err := controlSocket.Read(payload); err != nil {
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				execLog.WithError(err).Error("Failed to read control message payload")
+			}
+		}
+
 		cmdLog := execLog.WithFields(log.Fields{
 			"command": controlMsg.Type.String(),
 		})
@@ -155,7 +167,7 @@ func (s *DotsServerGrpc) manageControlSocket(ctx context.Context, appName string
 		// Dispatch command.
 		switch controlMsg.Type {
 		case ControlMsgTypeRequestSocket:
-			s.handleRequestSocketControlMsg(ctx, controlSocket, &controlMsg, cmdLog)
+			instance.handleRequestSocketControlMsg(ctx, controlSocket, &controlMsg, cmdLog)
 		}
 	}
 }

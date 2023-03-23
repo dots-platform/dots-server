@@ -5,15 +5,14 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"os/exec"
 	"path"
-	"strconv"
 
 	"github.com/avast/retry-go"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 
+	"github.com/dtrust-project/dtrust-server/internal/appinstance"
 	"github.com/dtrust-project/dtrust-server/internal/config"
 	"github.com/dtrust-project/dtrust-server/protos/dotspb"
 )
@@ -28,7 +27,7 @@ func (s *DotsServerGrpc) Exec(ctx context.Context, app *dotspb.App) (*dotspb.Res
 		return nil, grpc.Errorf(codes.NotFound, "App with name not found")
 	}
 
-	execLog := log.WithFields(log.Fields{
+	appLog := log.WithFields(log.Fields{
 		"appName":     app.GetAppName(),
 		"appFuncName": app.GetFuncName(),
 	})
@@ -106,11 +105,11 @@ func (s *DotsServerGrpc) Exec(ctx context.Context, app *dotspb.App) (*dotspb.Res
 			sockets[s.rank] = socket
 		case err := <-errChan:
 			loopErr = err
-			execLog.WithError(err).Error("Error opening application socket")
+			appLog.WithError(err).Error("Error opening application socket")
 		}
 	}
 	if loopErr != nil {
-		return nil, grpc.Errorf(codes.Internal, internalErrMsg)
+		return nil, loopErr
 	}
 
 	// Open input files.
@@ -120,10 +119,10 @@ func (s *DotsServerGrpc) Exec(ctx context.Context, app *dotspb.App) (*dotspb.Res
 		inputFile, err := os.Open(inputPath)
 		if err != nil {
 			if !os.IsNotExist(err) {
-				execLog.WithFields(log.Fields{
+				appLog.WithFields(log.Fields{
 					"blobPath": inputPath,
 				}).WithError(err).Error("Error opening input file")
-				return nil, grpc.Errorf(codes.Internal, internalErrMsg)
+				return nil, loopErr
 			}
 
 			// Handle not found error.
@@ -140,7 +139,7 @@ func (s *DotsServerGrpc) Exec(ctx context.Context, app *dotspb.App) (*dotspb.Res
 		outputFile, err := os.Create(outputPath)
 		if err != nil {
 			if !os.IsNotExist(err) {
-				execLog.WithFields(log.Fields{
+				appLog.WithFields(log.Fields{
 					"blobPath": outputPath,
 				}).WithError(err).Error("Error opening output file")
 				return nil, grpc.Errorf(codes.Internal, internalErrMsg)
@@ -153,92 +152,15 @@ func (s *DotsServerGrpc) Exec(ctx context.Context, app *dotspb.App) (*dotspb.Res
 		outputFiles[i] = outputFile
 	}
 
-	// Run program.
-	cmd := exec.CommandContext(ctx, appConfig.Path)
-	cmd.ExtraFiles = append(cmd.ExtraFiles, inputFiles...)
-	cmd.ExtraFiles = append(cmd.ExtraFiles, outputFiles...)
-	cmd.ExtraFiles = append(cmd.ExtraFiles, sockets...)
-	stdin, err := cmd.StdinPipe()
-	if err := cmd.Start(); err != nil {
-		execLog.WithError(err).Error("Error starting application")
-		return nil, grpc.Errorf(codes.Internal, "Application error")
-	}
-	defer cmd.Process.Kill()
-
-	// Open control socket.
-	controlSocketPath := fmt.Sprintf("/tmp/socket-%d", cmd.Process.Pid)
-	os.Remove(controlSocketPath)
-	controlConn, err := listenConfig.Listen(ctx, "unix", controlSocketPath)
+	// Start app.
+	instance, err := appinstance.ExecApp(ctx, s.config, appConfig.Path, app.GetAppName(), app.GetFuncName(), inputFiles, outputFiles, sockets)
 	if err != nil {
-		execLog.WithError(err).Error("Error creating control socket listener")
-		return nil, grpc.Errorf(codes.Internal, "Application error")
-	}
-	defer os.Remove(controlSocketPath)
-	defer controlConn.Close()
-	defer cancel() // Cancel again to make sure it's called before controlConn.Close()
-
-	// Accept connection on control socket.
-	go func() {
-		controlSocket, err := controlConn.Accept()
-		if err != nil {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-				execLog.WithError(err).Error("Error accepting control socket connection")
-				return
-			}
-		}
-		defer controlSocket.Close()
-		s.manageControlSocket(ctx, app.GetAppName(), app.GetFuncName(), controlSocket.(*net.UnixConn))
-	}()
-
-	// Generate input for DoTS app environment. Per https://pkg.go.dev/os/exec,
-	// the i'th entry of cmd.ExtraFiles is mapped to FD 3 + i, so the loop
-	// relies only on the lengths inputFiles, outputFiles, and sockets.
-	dotsEnvInput := ""
-	dotsEnvInput += strconv.Itoa(ourRank) + "\n"
-	for i := range inputFiles {
-		if i > 0 {
-			dotsEnvInput += " "
-		}
-		dotsEnvInput += strconv.Itoa(3 + i)
-	}
-	dotsEnvInput += "\n"
-	for i := range inputFiles {
-		if i > 0 {
-			dotsEnvInput += " "
-		}
-		dotsEnvInput += strconv.Itoa(3 + len(inputFiles) + i)
-	}
-	dotsEnvInput += "\n"
-	for i, socket := range sockets {
-		if i > 0 {
-			dotsEnvInput += " "
-		}
-		if socket == nil {
-			dotsEnvInput += "0"
-		} else {
-			dotsEnvInput += strconv.Itoa(3 + len(inputFiles) + len(outputFiles) + i)
-		}
-	}
-	dotsEnvInput += "\n"
-	dotsEnvInput += app.GetFuncName() + "\n"
-
-	// Write environment to stdin.
-	if err != nil {
-		execLog.WithError(err).Error("Error opening application stdin pipe")
+		appLog.WithError(err).Error("Error spawning app instance")
 		return nil, grpc.Errorf(codes.Internal, internalErrMsg)
 	}
-	if _, err := stdin.Write([]byte(dotsEnvInput)); err != nil {
-		execLog.WithError(err).Error("Error writing environment to application stdin")
+	if err := instance.Wait(); err != nil {
+		appLog.WithError(err).Error("Error spawning app instance")
 		return nil, grpc.Errorf(codes.Internal, internalErrMsg)
-	}
-
-	// Wait for application to finish.
-	if err := cmd.Wait(); err != nil {
-		execLog.WithError(err).Warn("Application exited with non-zero return code")
-		return nil, grpc.Errorf(codes.Internal, "Application error")
 	}
 
 	return &dotspb.Result{Result: "success"}, nil
