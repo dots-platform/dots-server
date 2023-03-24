@@ -40,8 +40,8 @@ func (s *DotsServerGrpc) Exec(ctx context.Context, app *dotspb.App) (*dotspb.Res
 		conn *net.TCPConn
 	})
 	errChan := make(chan error)
-	ourRank := s.config.NodeRanks[s.nodeId]
-	ourConfig := s.config.Nodes[s.nodeId]
+	ourRank := s.config.NodeRanks[s.config.OurNodeId]
+	ourConfig := s.config.Nodes[s.config.OurNodeId]
 	for nodeId, nodeConfig := range s.config.Nodes {
 		go func(nodeId string, nodeConfig *config.NodeConfig) {
 			otherRank := s.config.NodeRanks[nodeId]
@@ -115,7 +115,7 @@ func (s *DotsServerGrpc) Exec(ctx context.Context, app *dotspb.App) (*dotspb.Res
 	// Open input files.
 	inputFiles := make([]*os.File, len(app.GetInFiles()))
 	for i, inputName := range app.GetInFiles() {
-		inputPath := path.Join(s.config.FileStorageDir, s.nodeId, app.GetClientId(), inputName)
+		inputPath := path.Join(s.config.FileStorageDir, s.config.OurNodeId, app.GetClientId(), inputName)
 		inputFile, err := os.Open(inputPath)
 		if err != nil {
 			if !os.IsNotExist(err) {
@@ -135,7 +135,7 @@ func (s *DotsServerGrpc) Exec(ctx context.Context, app *dotspb.App) (*dotspb.Res
 	// Open output files.
 	outputFiles := make([]*os.File, len(app.GetOutFiles()))
 	for i, outputName := range app.GetOutFiles() {
-		outputPath := path.Join(s.config.FileStorageDir, s.nodeId, app.GetClientId(), outputName)
+		outputPath := path.Join(s.config.FileStorageDir, s.config.OurNodeId, app.GetClientId(), outputName)
 		outputFile, err := os.Create(outputPath)
 		if err != nil {
 			if !os.IsNotExist(err) {
