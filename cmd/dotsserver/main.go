@@ -16,12 +16,26 @@ func main() {
 	// Create and parse arguments.
 	var configPath string
 	var nodeId string
+	var logLevel string
 	flag.StringVar(&configPath, "config", "", "Path to the config file")
 	flag.StringVar(&nodeId, "node_id", "", "ID of the DoTS node")
+	flag.StringVar(&logLevel, "log_level", "info", "Log level. One of: fatal, error, warn, info, debug")
 	flag.Parse()
 	if configPath == "" || nodeId == "" {
 		flag.Usage()
 		return
+	}
+	switch logLevel {
+	case "fatal":
+		log.SetLevel(log.FatalLevel)
+	case "error":
+		log.SetLevel(log.ErrorLevel)
+	case "warn":
+		log.SetLevel(log.WarnLevel)
+	case "info":
+		log.SetLevel(log.InfoLevel)
+	case "debug":
+		log.SetLevel(log.DebugLevel)
 	}
 
 	// Get config.
