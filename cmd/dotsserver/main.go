@@ -40,6 +40,7 @@ func main() {
 	if err != nil {
 		log.WithError(err).Fatal("Failed to instantiate DoTS server")
 	}
+	defer dotsServer.Shutdown()
 	dotspb.RegisterDecExecServer(grpcServer, dotsServer)
 
 	// Listen.

@@ -1,6 +1,8 @@
 package dotsservergrpc
 
 import (
+	"context"
+
 	"github.com/dtrust-project/dtrust-server/internal/config"
 	"github.com/dtrust-project/dtrust-server/internal/serverconn"
 	"github.com/dtrust-project/dtrust-server/protos/dotspb"
@@ -22,5 +24,14 @@ func NewDotsServerGrpc(nodeId string, config *config.Config) (*DotsServerGrpc, e
 	server := &DotsServerGrpc{
 		config: config,
 	}
+
+	if err := server.conns.Establish(context.Background(), config); err != nil {
+		return nil, err
+	}
+
 	return server, nil
+}
+
+func (s *DotsServerGrpc) Shutdown() {
+	s.conns.CloseAll()
 }

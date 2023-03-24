@@ -251,3 +251,18 @@ func (c *ServerConn) Unregister(msgType MsgType, id uuid.UUID) {
 	}
 	delete(typeChannels, id)
 }
+
+func (c *ServerConn) CloseAll() {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	for _, typeChannels := range c.channels {
+		for _, idChannels := range typeChannels {
+			for _, channels := range idChannels {
+				close(channels.Send)
+				close(channels.Recv)
+			}
+		}
+	}
+	c.channels = nil
+}
