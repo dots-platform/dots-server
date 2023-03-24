@@ -37,8 +37,9 @@ type ServerConn struct {
 	connections map[string]net.Conn
 	encoders    map[string]*gob.Encoder
 	decoders    map[string]*gob.Decoder
-	channels    map[MsgType]map[uuid.UUID]*Channels
+	channels    map[MsgType]map[uuid.UUID]map[string]Channels
 	mutex       sync.RWMutex
+	config      *config.Config
 	ctx         context.Context
 }
 
@@ -68,7 +69,7 @@ func (c *ServerConn) handleIncomingMessage(nodeId string, msg *ServerMsg) {
 	}
 
 	select {
-	case channels.Recv <- msg:
+	case channels[nodeId].Recv <- msg:
 	default:
 		msgLog.Warn("Listener receive buffer full; tearing down the connection")
 		func() {
@@ -200,18 +201,19 @@ func (c *ServerConn) Establish(ctx context.Context, conf *config.Config) error {
 	c.connections = conns
 	c.encoders = encoders
 	c.decoders = decoders
+	c.channels = make(map[MsgType]map[uuid.UUID]map[string]Channels)
 
 	return nil
 }
 
-func (c *ServerConn) Register(ctx context.Context, msgType MsgType, id uuid.UUID) (*Channels, error) {
+func (c *ServerConn) Register(ctx context.Context, msgType MsgType, id uuid.UUID) (map[string]Channels, error) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
 	// Ensure channel doesn't already exist.
 	typeChannels, ok := c.channels[msgType]
 	if !ok {
-		typeChannels = make(map[uuid.UUID]*Channels)
+		typeChannels = make(map[uuid.UUID]map[string]Channels)
 		c.channels[msgType] = typeChannels
 	}
 	if _, ok := typeChannels[id]; ok {
@@ -219,9 +221,12 @@ func (c *ServerConn) Register(ctx context.Context, msgType MsgType, id uuid.UUID
 	}
 
 	// Make channel.
-	channels := &Channels{
-		Send: make(chan *ServerMsg, msgBufferSize),
-		Recv: make(chan *ServerMsg, msgBufferSize),
+	channels := make(map[string]Channels)
+	for nodeId := range c.config.Nodes {
+		channels[nodeId] = Channels{
+			Send: make(chan *ServerMsg, msgBufferSize),
+			Recv: make(chan *ServerMsg, msgBufferSize),
+		}
 	}
 	typeChannels[id] = channels
 
@@ -236,11 +241,13 @@ func (c *ServerConn) Unregister(msgType MsgType, id uuid.UUID) {
 	if !ok {
 		return
 	}
-	channels, ok := typeChannels[id]
+	idChannels, ok := typeChannels[id]
 	if !ok {
 		return
 	}
-	close(channels.Send)
-	close(channels.Recv)
+	for _, channels := range idChannels {
+		close(channels.Send)
+		close(channels.Recv)
+	}
 	delete(typeChannels, id)
 }
