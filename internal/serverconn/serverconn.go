@@ -24,13 +24,12 @@ const (
 type ServerMsg struct {
 	Type      MsgType
 	SubtypeId uuid.UUID
-	Source    string
 	Data      any
 }
 
 type Channels struct {
-	Send chan *ServerMsg
-	Recv chan *ServerMsg
+	Send chan any
+	Recv chan any
 }
 
 type ServerConn struct {
@@ -44,6 +43,10 @@ type ServerConn struct {
 }
 
 const msgBufferSize = 256
+
+func init() {
+	gob.Register(ServerMsg{})
+}
 
 func (c *ServerConn) handleIncomingMessage(nodeId string, msg *ServerMsg) {
 	msgLog := log.WithFields(log.Fields{
@@ -69,7 +72,7 @@ func (c *ServerConn) handleIncomingMessage(nodeId string, msg *ServerMsg) {
 	}
 
 	select {
-	case channels[nodeId].Recv <- msg:
+	case channels[nodeId].Recv <- msg.Data:
 	default:
 		msgLog.Warn("Listener receive buffer full; tearing down the connection")
 		func() {
@@ -78,6 +81,21 @@ func (c *ServerConn) handleIncomingMessage(nodeId string, msg *ServerMsg) {
 			c.Unregister(msg.Type, msg.SubtypeId)
 		}()
 	}
+}
+
+func (c *ServerConn) handleOutgoingMessage(nodeId string, msgType MsgType, id uuid.UUID, data any) {
+	msgLog := log.WithFields(log.Fields{
+		"otherNodeId":  nodeId,
+		"msgType":      msgType,
+		"msgSubtypeId": id,
+	})
+	msgLog.Debug("Sending server message")
+
+	c.encoders[nodeId].Encode(&ServerMsg{
+		Type:      msgType,
+		SubtypeId: id,
+		Data:      data,
+	})
 }
 
 func (c *ServerConn) receiveMessages(nodeId string) {
@@ -223,9 +241,19 @@ func (c *ServerConn) Register(ctx context.Context, msgType MsgType, id uuid.UUID
 	// Make channel.
 	channels := make(map[string]Channels)
 	for nodeId := range c.config.Nodes {
+		send := make(chan any)
+		recv := make(chan any, msgBufferSize)
+
+		// Spawn sender.
+		go func() {
+			for data := range send {
+				c.handleOutgoingMessage(nodeId, msgType, id, data)
+			}
+		}()
+
 		channels[nodeId] = Channels{
-			Send: make(chan *ServerMsg, msgBufferSize),
-			Recv: make(chan *ServerMsg, msgBufferSize),
+			Send: send,
+			Recv: recv,
 		}
 	}
 	typeChannels[id] = channels
