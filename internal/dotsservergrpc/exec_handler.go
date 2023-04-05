@@ -2,18 +2,16 @@ package dotsservergrpc
 
 import (
 	"context"
-	"fmt"
-	"net"
 	"os"
 	"path"
 
-	"github.com/avast/retry-go"
+	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 
 	"github.com/dtrust-project/dtrust-server/internal/appinstance"
-	"github.com/dtrust-project/dtrust-server/internal/config"
+	"github.com/dtrust-project/dtrust-server/internal/serverconn"
 	"github.com/dtrust-project/dtrust-server/protos/dotspb"
 )
 
@@ -32,85 +30,7 @@ func (s *DotsServerGrpc) Exec(ctx context.Context, app *dotspb.App) (*dotspb.Res
 		"appFuncName": app.GetFuncName(),
 	})
 
-	// Set up pairwise TCP connections with all apps.
-	var dialer net.Dialer
-	var listenConfig net.ListenConfig
-	socketChan := make(chan *struct {
-		rank int
-		conn *net.TCPConn
-	})
-	errChan := make(chan error)
-	ourRank := s.config.NodeRanks[s.config.OurNodeId]
-	ourConfig := s.config.Nodes[s.config.OurNodeId]
-	for nodeId, nodeConfig := range s.config.Nodes {
-		go func(nodeId string, nodeConfig *config.NodeConfig) {
-			otherRank := s.config.NodeRanks[nodeId]
-			if ourRank == otherRank {
-				return
-			}
-
-			var conn net.Conn
-			if ourRank < otherRank {
-				// Act as the listener for higher ranks.
-				listener, err := listenConfig.Listen(ctx, "tcp", fmt.Sprintf(":%d", ourConfig.Ports[otherRank]))
-				if err != nil {
-					errChan <- err
-					return
-				}
-				defer listener.Close()
-				conn, err = listener.Accept()
-				if err != nil {
-					errChan <- err
-					return
-				}
-			} else {
-				// Act as dialer for lower ranks.
-				if err := retry.Do(
-					func() error {
-						c, err := dialer.DialContext(ctx, "tcp", fmt.Sprintf(":%d", nodeConfig.Ports[ourRank]))
-						if err != nil {
-							return err
-						}
-						conn = c
-						return nil
-					},
-					retry.Context(ctx),
-				); err != nil {
-					errChan <- err
-				}
-			}
-
-			// Extract socket and output.
-			socketChan <- &struct {
-				rank int
-				conn *net.TCPConn
-			}{
-				rank: otherRank,
-				conn: conn.(*net.TCPConn),
-			}
-		}(nodeId, nodeConfig)
-	}
-	sockets := make([]*os.File, len(s.config.Nodes))
-	var loopErr error
-	for i := 0; i < len(s.config.Nodes)-1; i++ {
-		select {
-		case s := <-socketChan:
-			defer s.conn.Close()
-			socket, err := s.conn.File()
-			if err != nil {
-				loopErr = err
-				continue
-			}
-			defer socket.Close()
-			sockets[s.rank] = socket
-		case err := <-errChan:
-			loopErr = err
-			appLog.WithError(err).Error("Error opening application socket")
-		}
-	}
-	if loopErr != nil {
-		return nil, loopErr
-	}
+	appLog.Debug("Executing appliation")
 
 	// Open input files.
 	inputFiles := make([]*os.File, len(app.GetInFiles()))
@@ -152,8 +72,17 @@ func (s *DotsServerGrpc) Exec(ctx context.Context, app *dotspb.App) (*dotspb.Res
 		outputFiles[i] = outputFile
 	}
 
+	// Register connection channels.
+	// TODO Use an actual ID rather than uuid.Nil to disambiguate registrations.
+	conns, err := s.conns.Register(ctx, serverconn.MsgTypeAppInstance, uuid.Nil)
+	if err != nil {
+		appLog.WithError(err).Error("Error registering app instance server connection")
+		return nil, err
+	}
+	defer s.conns.Unregister(serverconn.MsgTypeAppInstance, uuid.Nil)
+
 	// Start app.
-	instance, err := appinstance.ExecApp(ctx, s.config, appConfig.Path, app.GetAppName(), app.GetFuncName(), inputFiles, outputFiles, sockets)
+	instance, err := appinstance.ExecApp(ctx, s.config, appConfig.Path, app.GetAppName(), app.GetFuncName(), inputFiles, outputFiles, conns)
 	if err != nil {
 		appLog.WithError(err).Error("Error spawning app instance")
 		return nil, grpc.Errorf(codes.Internal, internalErrMsg)

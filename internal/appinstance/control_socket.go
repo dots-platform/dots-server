@@ -21,21 +21,23 @@ type ControlMsgType uint16
 
 const (
 	ControlMsgTypeRequestSocket ControlMsgType = 1
+	ControlMsgTypeMsgSend                      = 2
+	ControlMsgTypeMsgRecv                      = 3
+	ControlMsgTypeMsgRecvResp                  = 4
 )
-
-func (t ControlMsgType) validate() error {
-	if t < 1 || t > 1 {
-		return errors.New("Invalid value for ControlMsgType")
-	}
-	return nil
-}
 
 func (t ControlMsgType) String() string {
 	switch t {
 	case ControlMsgTypeRequestSocket:
 		return "REQUEST_SOCKET"
+	case ControlMsgTypeMsgSend:
+		return "MSG_SEND"
+	case ControlMsgTypeMsgRecv:
+		return "MSG_RECV"
+	case ControlMsgTypeMsgRecvResp:
+		return "MSG_RECV_RESP"
 	default:
-		panic("Unknown control message type")
+		return "INVALID"
 	}
 }
 
@@ -51,6 +53,16 @@ type ControlMsgDataRequestSocket struct {
 	OtherRank uint32
 }
 
+type ControlMsgDataMsgSend struct {
+	Recipient uint32
+	Tag       uint32
+}
+
+type ControlMsgDataMsgRecv struct {
+	Sender uint32
+	Tag    uint32
+}
+
 func sendFile(ctx context.Context, controlSocket *net.UnixConn, file *os.File) error {
 	controlFile, err := controlSocket.File()
 	if err != nil {
@@ -64,6 +76,52 @@ func sendFile(ctx context.Context, controlSocket *net.UnixConn, file *os.File) e
 	}
 
 	return nil
+}
+
+func sendControlMsg(controlMsg *ControlMsg, payload []byte, controlSocket *net.UnixConn) error {
+	// TODO Locking.
+
+	// Send header.
+	controlMsg.PayloadLen = uint32(len(payload))
+	if err := binary.Write(controlSocket, binary.BigEndian, controlMsg); err != nil {
+		return err
+	}
+
+	// Send payload.
+	if _, err := controlSocket.Write(payload); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func recvControlMsg(controlSocket *net.UnixConn, logger log.FieldLogger) (*ControlMsg, []byte, error) {
+	// TODO Locking.
+
+	// Read header.
+	var controlMsg ControlMsg
+	if err := binary.Read(controlSocket, binary.BigEndian, &controlMsg); err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil, nil, err
+		}
+		logger.WithError(err).Error("Failed to read control message")
+		return nil, nil, err
+	}
+
+	// Read payload.
+	var payload []byte
+	if controlMsg.PayloadLen > 0 {
+		payload = make([]byte, controlMsg.PayloadLen)
+		if _, err := controlSocket.Read(payload); err != nil {
+			if errors.Is(err, io.EOF) {
+				return nil, nil, err
+			}
+			logger.WithError(err).Error("Failed to read control message payload")
+			return nil, nil, err
+		}
+	}
+
+	return &controlMsg, payload, nil
 }
 
 func (instance *AppInstance) handleRequestSocketControlMsg(ctx context.Context, controlSocket *net.UnixConn, controlMsg *ControlMsg, cmdLog log.FieldLogger) {
@@ -126,6 +184,64 @@ func (instance *AppInstance) handleRequestSocketControlMsg(ctx context.Context, 
 	}
 }
 
+func (instance *AppInstance) handleMsgSendControlMsg(ctx context.Context, controlSocket *net.UnixConn, controlMsg *ControlMsg, payload []byte, cmdLog log.FieldLogger) {
+	var data ControlMsgDataMsgSend
+	dataReader := bytes.NewReader(controlMsg.Data[:])
+	if err := binary.Read(dataReader, binary.BigEndian, &data); err != nil {
+		cmdLog.WithError(err).Error("Failed to unmarshal binary data")
+		return
+	}
+
+	if int(data.Recipient) >= len(instance.config.NodeIds) {
+		cmdLog.Warn("Application issued invalid command arguments")
+		return
+	}
+
+	recipientId := instance.config.NodeIds[data.Recipient]
+	select {
+	// TODO Probably want to wrap this interface or something.
+	case instance.serverConns[recipientId].Send <- payload:
+	case <-ctx.Done():
+		return
+	}
+}
+
+func (instance *AppInstance) handleMsgRecvControlMsg(ctx context.Context, controlSocket *net.UnixConn, controlMsg *ControlMsg, cmdLog log.FieldLogger) {
+	var data ControlMsgDataMsgRecv
+	dataReader := bytes.NewReader(controlMsg.Data[:])
+	if err := binary.Read(dataReader, binary.BigEndian, &data); err != nil {
+		cmdLog.WithError(err).Error("Failed to unmarshal binary data")
+		return
+	}
+
+	if int(data.Sender) >= len(instance.config.NodeIds) {
+		cmdLog.Warn("Application issued invalid command arguments")
+		return
+	}
+
+	senderId := instance.config.NodeIds[data.Sender]
+	var payload []byte
+	select {
+	case recvPayload, ok := <-instance.serverConns[senderId].Recv:
+		if !ok {
+			cmdLog.Warn("Receive channel closed")
+			return
+		}
+		payload = recvPayload.([]byte)
+	case <-ctx.Done():
+		return
+	}
+
+	// Handle tags.
+	respMsg := ControlMsg{
+		Type: ControlMsgTypeMsgRecvResp,
+	}
+	if err := sendControlMsg(&respMsg, payload, controlSocket); err != nil {
+		cmdLog.WithError(err).Error("Error sending MSG_RECV response data")
+		return
+	}
+}
+
 func (instance *AppInstance) manageControlSocket(ctx context.Context, appName string, funcName string, controlSocket *net.UnixConn) {
 	execLog := log.WithFields(log.Fields{
 		"appName":     appName,
@@ -133,30 +249,9 @@ func (instance *AppInstance) manageControlSocket(ctx context.Context, appName st
 	})
 
 	for {
-		// Read header.
-		var controlMsg ControlMsg
-		if err := binary.Read(controlSocket, binary.BigEndian, &controlMsg); err != nil {
-			if errors.Is(err, io.EOF) {
-				break
-			}
-			execLog.WithError(err).Error("Failed to read control message")
+		controlMsg, payload, err := recvControlMsg(controlSocket, execLog)
+		if err != nil {
 			break
-		}
-		if err := controlMsg.Type.validate(); err != nil {
-			execLog.WithError(err).Warn("Application issued invalid command type")
-			break
-		}
-
-		// Read payload.
-		var payload []byte
-		if controlMsg.PayloadLen > 0 {
-			payload = make([]byte, controlMsg.PayloadLen)
-			if _, err := controlSocket.Read(payload); err != nil {
-				if errors.Is(err, io.EOF) {
-					break
-				}
-				execLog.WithError(err).Error("Failed to read control message payload")
-			}
 		}
 
 		cmdLog := execLog.WithFields(log.Fields{
@@ -167,7 +262,13 @@ func (instance *AppInstance) manageControlSocket(ctx context.Context, appName st
 		// Dispatch command.
 		switch controlMsg.Type {
 		case ControlMsgTypeRequestSocket:
-			instance.handleRequestSocketControlMsg(ctx, controlSocket, &controlMsg, cmdLog)
+			instance.handleRequestSocketControlMsg(ctx, controlSocket, controlMsg, cmdLog)
+		case ControlMsgTypeMsgSend:
+			instance.handleMsgSendControlMsg(ctx, controlSocket, controlMsg, payload, cmdLog)
+		case ControlMsgTypeMsgRecv:
+			instance.handleMsgRecvControlMsg(ctx, controlSocket, controlMsg, cmdLog)
+		default:
+			execLog.Warn("Application issued invalid control message type")
 		}
 	}
 }

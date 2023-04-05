@@ -9,16 +9,18 @@ import (
 	"strconv"
 
 	"github.com/dtrust-project/dtrust-server/internal/config"
+	"github.com/dtrust-project/dtrust-server/internal/serverconn"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 )
 
 type AppInstance struct {
-	appName  string
-	funcName string
-	appLog   log.FieldLogger
-	config   *config.Config
+	appName     string
+	funcName    string
+	appLog      log.FieldLogger
+	config      *config.Config
+	serverConns map[string]serverconn.Channels
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -26,12 +28,11 @@ type AppInstance struct {
 	done chan error
 }
 
-func (instance *AppInstance) execute(ctx context.Context, appPath string, appName string, funcName string, inputFiles []*os.File, outputFiles []*os.File, sockets []*os.File) {
+func (instance *AppInstance) execute(ctx context.Context, appPath string, appName string, funcName string, inputFiles []*os.File, outputFiles []*os.File) {
 	// Run program.
 	cmd := exec.CommandContext(ctx, appPath)
 	cmd.ExtraFiles = append(cmd.ExtraFiles, inputFiles...)
 	cmd.ExtraFiles = append(cmd.ExtraFiles, outputFiles...)
-	cmd.ExtraFiles = append(cmd.ExtraFiles, sockets...)
 	stdin, err := cmd.StdinPipe()
 	if err := cmd.Start(); err != nil {
 		instance.appLog.WithError(err).Error("Error starting application")
@@ -75,6 +76,7 @@ func (instance *AppInstance) execute(ctx context.Context, appPath string, appNam
 	// relies only on the lengths inputFiles, outputFiles, and sockets.
 	dotsEnvInput := ""
 	dotsEnvInput += strconv.Itoa(instance.config.OurNodeRank) + "\n"
+	dotsEnvInput += strconv.Itoa(len(instance.config.Nodes)) + "\n"
 	for i := range inputFiles {
 		if i > 0 {
 			dotsEnvInput += " "
@@ -87,17 +89,6 @@ func (instance *AppInstance) execute(ctx context.Context, appPath string, appNam
 			dotsEnvInput += " "
 		}
 		dotsEnvInput += strconv.Itoa(3 + len(inputFiles) + i)
-	}
-	dotsEnvInput += "\n"
-	for i, socket := range sockets {
-		if i > 0 {
-			dotsEnvInput += " "
-		}
-		if socket == nil {
-			dotsEnvInput += "0"
-		} else {
-			dotsEnvInput += strconv.Itoa(3 + len(inputFiles) + len(outputFiles) + i)
-		}
 	}
 	dotsEnvInput += "\n"
 	dotsEnvInput += funcName + "\n"
@@ -128,7 +119,7 @@ func (instance *AppInstance) Wait() error {
 	return <-instance.done
 }
 
-func ExecApp(ctx context.Context, conf *config.Config, appPath string, appName string, funcName string, inputFiles []*os.File, outputFiles []*os.File, sockets []*os.File) (*AppInstance, error) {
+func ExecApp(ctx context.Context, conf *config.Config, appPath string, appName string, funcName string, inputFiles []*os.File, outputFiles []*os.File, serverConns map[string]serverconn.Channels) (*AppInstance, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	instance := &AppInstance{
 		appName:  appName,
@@ -137,11 +128,12 @@ func ExecApp(ctx context.Context, conf *config.Config, appPath string, appName s
 			"appName":     appName,
 			"appFuncName": funcName,
 		}),
-		config: conf,
-		ctx:    ctx,
-		cancel: cancel,
-		done:   make(chan error),
+		config:      conf,
+		serverConns: serverConns,
+		ctx:         ctx,
+		cancel:      cancel,
+		done:        make(chan error),
 	}
-	go instance.execute(ctx, appPath, appName, funcName, inputFiles, outputFiles, sockets)
+	go instance.execute(ctx, appPath, appName, funcName, inputFiles, outputFiles)
 	return instance, nil
 }
