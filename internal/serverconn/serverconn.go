@@ -32,12 +32,6 @@ func (t MsgType) String() string {
 	}
 }
 
-type ServerMsg struct {
-	Type      MsgType
-	SubtypeId uuid.UUID
-	Data      any
-}
-
 type Channels struct {
 	Send chan any
 	Recv chan any
@@ -47,7 +41,7 @@ type ServerConn struct {
 	connections map[string]net.Conn
 	encoders    map[string]*gob.Encoder
 	decoders    map[string]*gob.Decoder
-	channels    map[MsgType]map[uuid.UUID]map[string]Channels
+	comms       map[MsgType]map[uuid.UUID]*ServerComm
 	mutex       sync.RWMutex
 	config      *config.Config
 	ctx         context.Context
@@ -55,11 +49,7 @@ type ServerConn struct {
 
 const msgBufferSize = 256
 
-func init() {
-	gob.Register(ServerMsg{})
-}
-
-func (c *ServerConn) handleIncomingMessage(nodeId string, msg *ServerMsg) {
+func (c *ServerConn) handleIncomingMessage(nodeId string, msg *serverMsg) {
 	msgLog := log.WithFields(log.Fields{
 		"otherNodeId":  nodeId,
 		"msgType":      msg.Type,
@@ -70,20 +60,20 @@ func (c *ServerConn) handleIncomingMessage(nodeId string, msg *ServerMsg) {
 	c.mutex.RLock()
 	defer c.mutex.RUnlock()
 
-	typeChannels, ok := c.channels[msg.Type]
+	typeComms, ok := c.comms[msg.Type]
 	if !ok {
 		msgLog.Warn("Received message with no listener")
 		return
 	}
 
-	channels, ok := typeChannels[msg.SubtypeId]
+	comm, ok := typeComms[msg.SubtypeId]
 	if !ok {
 		msgLog.Warn("Received message with no listener")
 		return
 	}
 
 	select {
-	case channels[nodeId].Recv <- msg.Data:
+	case comm.buf[nodeId] <- msg.Data:
 	default:
 		msgLog.Warn("Listener receive buffer full; tearing down the connection")
 		func() {
@@ -94,57 +84,25 @@ func (c *ServerConn) handleIncomingMessage(nodeId string, msg *ServerMsg) {
 	}
 }
 
-func (c *ServerConn) handleOutgoingMessage(nodeId string, msgType MsgType, id uuid.UUID, data any) {
-	msgLog := log.WithFields(log.Fields{
-		"otherNodeId":  nodeId,
-		"msgType":      msgType,
-		"msgSubtypeId": id,
-	})
-	msgLog.Debug("Sending server message")
-
-	if err := c.encoders[nodeId].Encode(&ServerMsg{
-		Type:      msgType,
-		SubtypeId: id,
-		Data:      data,
-	}); err != nil {
-		msgLog.WithError(err).Error("Failed to send server message")
-		return
-	}
-}
-
 func (c *ServerConn) receiveMessages(nodeId string, decoder *gob.Decoder) {
 	connLog := log.WithFields(log.Fields{
 		"otherNodeId": nodeId,
 	})
 
-	// Create goroutine to read from connection.
-	msgChan := make(chan *ServerMsg)
-	go func() {
-		loop := true
-		for loop {
-			var serverMsg *ServerMsg
-			if err := decoder.Decode(&serverMsg); err != nil {
-				select {
-				case <-c.ctx.Done():
-				default:
-					connLog.WithError(err).Error("Error reading from server connection")
-				}
-				loop = false
-			}
-			msgChan <- serverMsg
-		}
-	}()
-
 	// Repeatedly receive messages and forward them to the approprate registered
 	// channel.
 	loop := true
 	for loop {
-		select {
-		case msg := <-msgChan:
-			c.handleIncomingMessage(nodeId, msg)
-		case <-c.ctx.Done():
+		var serverMsg serverMsg
+		if err := decoder.Decode(&serverMsg); err != nil {
+			select {
+			case <-c.ctx.Done():
+			default:
+				connLog.WithError(err).Error("Error reading from server connection")
+			}
 			loop = false
 		}
+		c.handleIncomingMessage(nodeId, &serverMsg)
 	}
 }
 
@@ -239,78 +197,73 @@ func (c *ServerConn) Establish(ctx context.Context, conf *config.Config) error {
 	c.connections = conns
 	c.encoders = encoders
 	c.decoders = decoders
-	c.channels = make(map[MsgType]map[uuid.UUID]map[string]Channels)
+	c.comms = make(map[MsgType]map[uuid.UUID]*ServerComm)
 
 	return nil
 }
 
-func (c *ServerConn) Register(ctx context.Context, msgType MsgType, id uuid.UUID) (map[string]Channels, error) {
+func (c *ServerConn) Register(ctx context.Context, msgType MsgType, id uuid.UUID) (*ServerComm, error) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
-	// Ensure channel doesn't already exist.
-	typeChannels, ok := c.channels[msgType]
+	// Ensure comm doesn't already exist.
+	typeComms, ok := c.comms[msgType]
 	if !ok {
-		typeChannels = make(map[uuid.UUID]map[string]Channels)
-		c.channels[msgType] = typeChannels
+		typeComms = make(map[uuid.UUID]*ServerComm)
+		c.comms[msgType] = typeComms
 	}
-	if _, ok := typeChannels[id]; ok {
+	if _, ok := typeComms[id]; ok {
 		return nil, errors.New("Channel already exists for message type and ID")
 	}
 
-	// Make channel.
-	channels := make(map[string]Channels)
-	for nodeId := range c.config.Nodes {
-		send := make(chan any)
-		recv := make(chan any, msgBufferSize)
-
-		// Spawn sender.
-		go func(nodeId string) {
-			for data := range send {
-				c.handleOutgoingMessage(nodeId, msgType, id, data)
-			}
-		}(nodeId)
-
-		channels[nodeId] = Channels{
-			Send: send,
-			Recv: recv,
-		}
+	// Make comm.
+	comm := &ServerComm{
+		msgType:   msgType,
+		subtypeId: id,
+		buf:       make(map[string]chan any),
+		conn:      c,
+		logger: log.WithFields(log.Fields{
+			"msgType":      msgType,
+			"msgSubtypeId": id,
+		}),
 	}
-	typeChannels[id] = channels
+	for nodeId := range c.config.Nodes {
+		comm.buf[nodeId] = make(chan any, msgBufferSize)
+	}
 
-	return channels, nil
+	typeComms[id] = comm
+
+	return comm, nil
 }
 
 func (c *ServerConn) Unregister(msgType MsgType, id uuid.UUID) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
-	typeChannels, ok := c.channels[msgType]
+	typeComms, ok := c.comms[msgType]
 	if !ok {
 		return
 	}
-	idChannels, ok := typeChannels[id]
+	comm, ok := typeComms[id]
 	if !ok {
 		return
 	}
-	for _, channels := range idChannels {
-		close(channels.Send)
-		close(channels.Recv)
+	for _, buf := range comm.buf {
+		close(buf)
 	}
-	delete(typeChannels, id)
+	delete(typeComms, id)
 }
 
 func (c *ServerConn) CloseAll() {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
-	for _, typeChannels := range c.channels {
-		for _, idChannels := range typeChannels {
-			for _, channels := range idChannels {
-				close(channels.Send)
-				close(channels.Recv)
+	for _, typeComms := range c.comms {
+		for _, comm := range typeComms {
+			for _, buf := range comm.buf {
+				close(buf)
 			}
 		}
 	}
-	c.channels = nil
+	c.comms = nil
 }

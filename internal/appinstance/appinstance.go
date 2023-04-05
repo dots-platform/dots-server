@@ -16,11 +16,12 @@ import (
 )
 
 type AppInstance struct {
-	appName     string
-	funcName    string
-	appLog      log.FieldLogger
-	config      *config.Config
-	serverConns map[string]serverconn.Channels
+	appName      string
+	funcName     string
+	appLog       log.FieldLogger
+	config       *config.Config
+	serverComm   *serverconn.ServerComm
+	bufferedMsgs map[int]map[int][]byte
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -119,7 +120,7 @@ func (instance *AppInstance) Wait() error {
 	return <-instance.done
 }
 
-func ExecApp(ctx context.Context, conf *config.Config, appPath string, appName string, funcName string, inputFiles []*os.File, outputFiles []*os.File, serverConns map[string]serverconn.Channels) (*AppInstance, error) {
+func ExecApp(ctx context.Context, conf *config.Config, appPath string, appName string, funcName string, inputFiles []*os.File, outputFiles []*os.File, serverComm *serverconn.ServerComm) (*AppInstance, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	instance := &AppInstance{
 		appName:  appName,
@@ -128,11 +129,11 @@ func ExecApp(ctx context.Context, conf *config.Config, appPath string, appName s
 			"appName":     appName,
 			"appFuncName": funcName,
 		}),
-		config:      conf,
-		serverConns: serverConns,
-		ctx:         ctx,
-		cancel:      cancel,
-		done:        make(chan error),
+		config:     conf,
+		serverComm: serverComm,
+		ctx:        ctx,
+		cancel:     cancel,
+		done:       make(chan error),
 	}
 	go instance.execute(ctx, appPath, appName, funcName, inputFiles, outputFiles)
 	return instance, nil

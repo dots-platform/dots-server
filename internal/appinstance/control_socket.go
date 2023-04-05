@@ -198,12 +198,9 @@ func (instance *AppInstance) handleMsgSendControlMsg(controlSocket *net.UnixConn
 	}
 
 	recipientId := instance.config.NodeIds[data.Recipient]
-	select {
 	// TODO Probably want to wrap this interface or something.
-	case instance.serverConns[recipientId].Send <- payload:
-	case <-instance.ctx.Done():
-		return
-	}
+	// TODO Handle tag.
+	instance.serverComm.Send(recipientId, nil, payload)
 }
 
 func (instance *AppInstance) handleMsgRecvControlMsg(controlSocket *net.UnixConn, controlMsg *ControlMsg, cmdLog log.FieldLogger) {
@@ -220,17 +217,12 @@ func (instance *AppInstance) handleMsgRecvControlMsg(controlSocket *net.UnixConn
 	}
 
 	senderId := instance.config.NodeIds[data.Sender]
-	var payload []byte
-	select {
-	case recvPayload, ok := <-instance.serverConns[senderId].Recv:
-		if !ok {
-			cmdLog.Warn("Receive channel closed")
-			return
-		}
-		payload = recvPayload.([]byte)
-	case <-instance.ctx.Done():
+	recvPayload, err := instance.serverComm.Recv(senderId, nil)
+	if err != nil {
+		cmdLog.WithError(err).Error("Failed to receive")
 		return
 	}
+	payload := recvPayload.([]byte)
 
 	// Handle tags.
 	respMsg := ControlMsg{
