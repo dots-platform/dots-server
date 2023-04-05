@@ -124,7 +124,7 @@ func recvControlMsg(controlSocket *net.UnixConn, logger log.FieldLogger) (*Contr
 	return &controlMsg, payload, nil
 }
 
-func (instance *AppInstance) handleRequestSocketControlMsg(ctx context.Context, controlSocket *net.UnixConn, controlMsg *ControlMsg, cmdLog log.FieldLogger) {
+func (instance *AppInstance) handleRequestSocketControlMsg(controlSocket *net.UnixConn, controlMsg *ControlMsg, cmdLog log.FieldLogger) {
 	var data ControlMsgDataRequestSocket
 	dataReader := bytes.NewReader(controlMsg.Data[:])
 	if err := binary.Read(dataReader, binary.BigEndian, &data); err != nil {
@@ -141,7 +141,7 @@ func (instance *AppInstance) handleRequestSocketControlMsg(ctx context.Context, 
 	if ourRank < otherRank {
 		// Act as the listener for higher ranks.
 		var listenConfig net.ListenConfig
-		listener, err := listenConfig.Listen(ctx, "tcp", fmt.Sprintf(":%d", ourConfig.Ports[otherRank]))
+		listener, err := listenConfig.Listen(instance.ctx, "tcp", fmt.Sprintf(":%d", ourConfig.Ports[otherRank]))
 		if err != nil {
 			cmdLog.WithError(err).Error("Failed to listen")
 			return
@@ -157,14 +157,14 @@ func (instance *AppInstance) handleRequestSocketControlMsg(ctx context.Context, 
 		var dialer net.Dialer
 		if err := retry.Do(
 			func() error {
-				c, err := dialer.DialContext(ctx, "tcp", fmt.Sprintf(":%d", otherConfig.Ports[ourRank]))
+				c, err := dialer.DialContext(instance.ctx, "tcp", fmt.Sprintf(":%d", otherConfig.Ports[ourRank]))
 				if err != nil {
 					return err
 				}
 				conn = c
 				return nil
 			},
-			retry.Context(ctx),
+			retry.Context(instance.ctx),
 		); err != nil {
 			cmdLog.WithError(err).Error("Failed to dial")
 		}
@@ -178,13 +178,13 @@ func (instance *AppInstance) handleRequestSocketControlMsg(ctx context.Context, 
 		return
 	}
 	defer file.Close()
-	if err := sendFile(ctx, controlSocket, file); err != nil {
+	if err := sendFile(instance.ctx, controlSocket, file); err != nil {
 		cmdLog.WithError(err).Error("Failed to get send TCP through control socket")
 		return
 	}
 }
 
-func (instance *AppInstance) handleMsgSendControlMsg(ctx context.Context, controlSocket *net.UnixConn, controlMsg *ControlMsg, payload []byte, cmdLog log.FieldLogger) {
+func (instance *AppInstance) handleMsgSendControlMsg(controlSocket *net.UnixConn, controlMsg *ControlMsg, payload []byte, cmdLog log.FieldLogger) {
 	var data ControlMsgDataMsgSend
 	dataReader := bytes.NewReader(controlMsg.Data[:])
 	if err := binary.Read(dataReader, binary.BigEndian, &data); err != nil {
@@ -201,12 +201,12 @@ func (instance *AppInstance) handleMsgSendControlMsg(ctx context.Context, contro
 	select {
 	// TODO Probably want to wrap this interface or something.
 	case instance.serverConns[recipientId].Send <- payload:
-	case <-ctx.Done():
+	case <-instance.ctx.Done():
 		return
 	}
 }
 
-func (instance *AppInstance) handleMsgRecvControlMsg(ctx context.Context, controlSocket *net.UnixConn, controlMsg *ControlMsg, cmdLog log.FieldLogger) {
+func (instance *AppInstance) handleMsgRecvControlMsg(controlSocket *net.UnixConn, controlMsg *ControlMsg, cmdLog log.FieldLogger) {
 	var data ControlMsgDataMsgRecv
 	dataReader := bytes.NewReader(controlMsg.Data[:])
 	if err := binary.Read(dataReader, binary.BigEndian, &data); err != nil {
@@ -228,7 +228,7 @@ func (instance *AppInstance) handleMsgRecvControlMsg(ctx context.Context, contro
 			return
 		}
 		payload = recvPayload.([]byte)
-	case <-ctx.Done():
+	case <-instance.ctx.Done():
 		return
 	}
 
@@ -242,7 +242,7 @@ func (instance *AppInstance) handleMsgRecvControlMsg(ctx context.Context, contro
 	}
 }
 
-func (instance *AppInstance) manageControlSocket(ctx context.Context, appName string, funcName string, controlSocket *net.UnixConn) {
+func (instance *AppInstance) manageControlSocket(appName string, funcName string, controlSocket *net.UnixConn) {
 	execLog := log.WithFields(log.Fields{
 		"appName":     appName,
 		"appFuncName": funcName,
@@ -262,11 +262,11 @@ func (instance *AppInstance) manageControlSocket(ctx context.Context, appName st
 		// Dispatch command.
 		switch controlMsg.Type {
 		case ControlMsgTypeRequestSocket:
-			instance.handleRequestSocketControlMsg(ctx, controlSocket, controlMsg, cmdLog)
+			instance.handleRequestSocketControlMsg(controlSocket, controlMsg, cmdLog)
 		case ControlMsgTypeMsgSend:
-			instance.handleMsgSendControlMsg(ctx, controlSocket, controlMsg, payload, cmdLog)
+			instance.handleMsgSendControlMsg(controlSocket, controlMsg, payload, cmdLog)
 		case ControlMsgTypeMsgRecv:
-			instance.handleMsgRecvControlMsg(ctx, controlSocket, controlMsg, cmdLog)
+			instance.handleMsgRecvControlMsg(controlSocket, controlMsg, cmdLog)
 		default:
 			execLog.Warn("Application issued invalid control message type")
 		}

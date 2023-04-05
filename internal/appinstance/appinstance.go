@@ -68,7 +68,7 @@ func (instance *AppInstance) execute(ctx context.Context, appPath string, appNam
 			}
 		}
 		defer controlSocket.Close()
-		instance.manageControlSocket(ctx, appName, funcName, controlSocket.(*net.UnixConn))
+		instance.manageControlSocket(appName, funcName, controlSocket.(*net.UnixConn))
 	}()
 
 	// Generate input for DoTS app environment. Per https://pkg.go.dev/os/exec,
