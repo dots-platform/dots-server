@@ -160,7 +160,7 @@ func (instance *AppInstance) manageControlSocket(ctx context.Context, appName st
 		}
 
 		cmdLog := execLog.WithFields(log.Fields{
-			"command": controlMsg.Type.String(),
+			"command": controlMsg.Type,
 		})
 		cmdLog.Debug("Received control command")
 

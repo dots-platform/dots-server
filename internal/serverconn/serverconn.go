@@ -21,6 +21,17 @@ const (
 	MsgTypeAppInstance         = 2
 )
 
+func (t MsgType) String() string {
+	switch t {
+	case MsgTypePlatform:
+		return "PLATFORM"
+	case MsgTypeAppInstance:
+		return "APP_INSTANCE"
+	default:
+		return "INVALID"
+	}
+}
+
 type ServerMsg struct {
 	Type      MsgType
 	SubtypeId uuid.UUID
@@ -91,20 +102,22 @@ func (c *ServerConn) handleOutgoingMessage(nodeId string, msgType MsgType, id uu
 	})
 	msgLog.Debug("Sending server message")
 
-	c.encoders[nodeId].Encode(&ServerMsg{
+	if err := c.encoders[nodeId].Encode(&ServerMsg{
 		Type:      msgType,
 		SubtypeId: id,
 		Data:      data,
-	})
+	}); err != nil {
+		msgLog.WithError(err).Error("Failed to send server message")
+		return
+	}
 }
 
-func (c *ServerConn) receiveMessages(nodeId string) {
+func (c *ServerConn) receiveMessages(nodeId string, decoder *gob.Decoder) {
 	connLog := log.WithFields(log.Fields{
 		"otherNodeId": nodeId,
 	})
 
 	// Create goroutine to read from connection.
-	decoder := c.decoders[nodeId]
 	msgChan := make(chan *ServerMsg)
 	go func() {
 		loop := true
@@ -118,6 +131,7 @@ func (c *ServerConn) receiveMessages(nodeId string) {
 				}
 				loop = false
 			}
+			msgChan <- serverMsg
 		}
 	}()
 
@@ -135,6 +149,9 @@ func (c *ServerConn) receiveMessages(nodeId string) {
 }
 
 func (c *ServerConn) Establish(ctx context.Context, conf *config.Config) error {
+	c.config = conf
+	c.ctx = ctx
+
 	// Set up pairwise TCP connections with all nodes.
 	var dialer net.Dialer
 	var listenConfig net.ListenConfig
@@ -214,6 +231,9 @@ func (c *ServerConn) Establish(ctx context.Context, conf *config.Config) error {
 	for nodeId, conn := range conns {
 		encoders[nodeId] = gob.NewEncoder(conn)
 		decoders[nodeId] = gob.NewDecoder(conn)
+
+		// Spawn receiver.
+		go c.receiveMessages(nodeId, decoders[nodeId])
 	}
 
 	c.connections = conns
@@ -245,11 +265,11 @@ func (c *ServerConn) Register(ctx context.Context, msgType MsgType, id uuid.UUID
 		recv := make(chan any, msgBufferSize)
 
 		// Spawn sender.
-		go func() {
+		go func(nodeId string) {
 			for data := range send {
 				c.handleOutgoingMessage(nodeId, msgType, id, data)
 			}
-		}()
+		}(nodeId)
 
 		channels[nodeId] = Channels{
 			Send: send,

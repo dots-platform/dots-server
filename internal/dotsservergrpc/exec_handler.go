@@ -122,7 +122,7 @@ func (s *DotsServerGrpc) Exec(ctx context.Context, app *dotspb.App) (*dotspb.Res
 				appLog.WithFields(log.Fields{
 					"blobPath": inputPath,
 				}).WithError(err).Error("Error opening input file")
-				return nil, loopErr
+				return nil, err
 			}
 
 			// Handle not found error.

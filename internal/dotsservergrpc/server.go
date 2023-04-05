@@ -6,6 +6,7 @@ import (
 	"github.com/dtrust-project/dtrust-server/internal/config"
 	"github.com/dtrust-project/dtrust-server/internal/serverconn"
 	"github.com/dtrust-project/dtrust-server/protos/dotspb"
+	log "github.com/sirupsen/logrus"
 )
 
 const internalErrMsg = "Internal error"
@@ -28,6 +29,8 @@ func NewDotsServerGrpc(nodeId string, config *config.Config) (*DotsServerGrpc, e
 	if err := server.conns.Establish(context.Background(), config); err != nil {
 		return nil, err
 	}
+
+	log.Info("Server connections established")
 
 	return server, nil
 }
