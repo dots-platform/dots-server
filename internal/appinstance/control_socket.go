@@ -37,7 +37,7 @@ func (t ControlMsgType) String() string {
 	case ControlMsgTypeMsgRecvResp:
 		return "MSG_RECV_RESP"
 	default:
-		return "INVALID"
+		return fmt.Sprintf("INVALID: 0x%04x", uint16(t))
 	}
 }
 

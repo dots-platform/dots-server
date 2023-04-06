@@ -28,7 +28,7 @@ func (t MsgType) String() string {
 	case MsgTypeAppInstance:
 		return "APP_INSTANCE"
 	default:
-		return "INVALID"
+		return fmt.Sprintf("INVALID: 0x%04x", uint16(t))
 	}
 }
 
