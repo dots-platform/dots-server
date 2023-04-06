@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"encoding/gob"
 	"errors"
 	"fmt"
 	"io"
@@ -61,6 +62,14 @@ type ControlMsgDataMsgSend struct {
 type ControlMsgDataMsgRecv struct {
 	Sender uint32
 	Tag    uint32
+}
+
+type appMsgTag struct {
+	Tag int
+}
+
+func init() {
+	gob.Register(appMsgTag{})
 }
 
 func sendFile(ctx context.Context, controlSocket *net.UnixConn, file *os.File) error {
@@ -199,8 +208,7 @@ func (instance *AppInstance) handleMsgSendControlMsg(controlSocket *net.UnixConn
 
 	recipientId := instance.config.NodeIds[data.Recipient]
 	// TODO Probably want to wrap this interface or something.
-	// TODO Handle tag.
-	instance.serverComm.Send(recipientId, nil, payload)
+	instance.serverComm.Send(recipientId, appMsgTag{int(data.Tag)}, payload)
 }
 
 func (instance *AppInstance) handleMsgRecvControlMsg(controlSocket *net.UnixConn, controlMsg *ControlMsg, cmdLog log.FieldLogger) {
@@ -217,14 +225,13 @@ func (instance *AppInstance) handleMsgRecvControlMsg(controlSocket *net.UnixConn
 	}
 
 	senderId := instance.config.NodeIds[data.Sender]
-	recvPayload, err := instance.serverComm.Recv(senderId, nil)
+	recvPayload, err := instance.serverComm.Recv(senderId, appMsgTag{int(data.Tag)})
 	if err != nil {
 		cmdLog.WithError(err).Error("Failed to receive")
 		return
 	}
 	payload := recvPayload.([]byte)
 
-	// Handle tags.
 	respMsg := ControlMsg{
 		Type: ControlMsgTypeMsgRecvResp,
 	}

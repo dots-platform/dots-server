@@ -47,8 +47,6 @@ type ServerConn struct {
 	ctx         context.Context
 }
 
-const msgBufferSize = 256
-
 func (c *ServerConn) handleIncomingMessage(nodeId string, msg *serverMsg) {
 	msgLog := log.WithFields(log.Fields{
 		"otherNodeId":  nodeId,
@@ -72,8 +70,21 @@ func (c *ServerConn) handleIncomingMessage(nodeId string, msg *serverMsg) {
 		return
 	}
 
+	var recvChan chan any
+	func() {
+		comm.recvMutex.Lock()
+		defer comm.recvMutex.Unlock()
+
+		r, ok := comm.recvBuf[nodeId][msg.Tag]
+		if !ok {
+			r = make(chan any, recvBufSize)
+			comm.recvBuf[nodeId][msg.Tag] = r
+		}
+		recvChan = r
+	}()
+
 	select {
-	case comm.buf[nodeId] <- msg.Data:
+	case recvChan <- msg.Data:
 	default:
 		msgLog.Warn("Listener receive buffer full; tearing down the connection")
 		func() {
@@ -220,7 +231,7 @@ func (c *ServerConn) Register(ctx context.Context, msgType MsgType, id uuid.UUID
 	comm := &ServerComm{
 		msgType:   msgType,
 		subtypeId: id,
-		buf:       make(map[string]chan any),
+		recvBuf:   make(map[string]map[any]chan any),
 		conn:      c,
 		logger: log.WithFields(log.Fields{
 			"msgType":      msgType,
@@ -228,7 +239,7 @@ func (c *ServerConn) Register(ctx context.Context, msgType MsgType, id uuid.UUID
 		}),
 	}
 	for nodeId := range c.config.Nodes {
-		comm.buf[nodeId] = make(chan any, msgBufferSize)
+		comm.recvBuf[nodeId] = make(map[any]chan any)
 	}
 
 	typeComms[id] = comm
@@ -248,8 +259,10 @@ func (c *ServerConn) Unregister(msgType MsgType, id uuid.UUID) {
 	if !ok {
 		return
 	}
-	for _, buf := range comm.buf {
-		close(buf)
+	for _, nodeChans := range comm.recvBuf {
+		for _, c := range nodeChans {
+			close(c)
+		}
 	}
 	delete(typeComms, id)
 }
@@ -260,8 +273,10 @@ func (c *ServerConn) CloseAll() {
 
 	for _, typeComms := range c.comms {
 		for _, comm := range typeComms {
-			for _, buf := range comm.buf {
-				close(buf)
+			for _, nodeChans := range comm.recvBuf {
+				for _, c := range nodeChans {
+					close(c)
+				}
 			}
 		}
 	}
