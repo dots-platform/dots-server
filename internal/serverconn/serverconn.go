@@ -44,7 +44,6 @@ type ServerConn struct {
 	comms       map[MsgType]map[uuid.UUID]*ServerComm
 	mutex       sync.RWMutex
 	config      *config.Config
-	ctx         context.Context
 }
 
 func (c *ServerConn) handleIncomingMessage(nodeId string, msg *serverMsg) {
@@ -106,24 +105,17 @@ func (c *ServerConn) receiveMessages(nodeId string, decoder *gob.Decoder) {
 	for loop {
 		var serverMsg serverMsg
 		if err := decoder.Decode(&serverMsg); err != nil {
-			select {
-			case <-c.ctx.Done():
-			default:
-				connLog.WithError(err).Error("Error reading from server connection")
-			}
+			connLog.WithError(err).Error("Error reading from server connection")
 			loop = false
 		}
 		c.handleIncomingMessage(nodeId, &serverMsg)
 	}
 }
 
-func (c *ServerConn) Establish(ctx context.Context, conf *config.Config) error {
+func (c *ServerConn) Establish(conf *config.Config) error {
 	c.config = conf
-	c.ctx = ctx
 
 	// Set up pairwise TCP connections with all nodes.
-	var dialer net.Dialer
-	var listenConfig net.ListenConfig
 	connChan := make(chan *struct {
 		nodeId string
 		conn   *net.TCPConn
@@ -141,7 +133,7 @@ func (c *ServerConn) Establish(ctx context.Context, conf *config.Config) error {
 			var conn net.Conn
 			if ourRank < otherRank {
 				// Act as the listener for higher ranks.
-				listener, err := listenConfig.Listen(ctx, "tcp", fmt.Sprintf(":%d", ourConfig.Ports[otherRank]))
+				listener, err := net.Listen("tcp", fmt.Sprintf(":%d", ourConfig.Ports[otherRank]))
 				if err != nil {
 					errChan <- err
 					return
@@ -156,14 +148,13 @@ func (c *ServerConn) Establish(ctx context.Context, conf *config.Config) error {
 				// Act as dialer for lower ranks.
 				if err := retry.Do(
 					func() error {
-						c, err := dialer.DialContext(ctx, "tcp", fmt.Sprintf(":%d", nodeConfig.Ports[ourRank]))
+						c, err := net.Dial("tcp", fmt.Sprintf(":%d", nodeConfig.Ports[ourRank]))
 						if err != nil {
 							return err
 						}
 						conn = c
 						return nil
 					},
-					retry.Context(ctx),
 				); err != nil {
 					errChan <- err
 				}

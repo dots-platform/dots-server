@@ -30,7 +30,7 @@ func NewDotsServerGrpc(nodeId string, config *config.Config) (*DotsServerGrpc, e
 	}
 
 	// Establish server-to-server connection.
-	if err := server.conns.Establish(context.Background(), config); err != nil {
+	if err := server.conns.Establish(config); err != nil {
 		log.Error("Failed to establish server-to-server connection")
 		return nil, err
 	}
