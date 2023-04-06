@@ -33,6 +33,7 @@ func init() {
 func (c *ServerComm) Send(nodeId string, tag any, data any) error {
 	msgLog := c.logger.WithFields(log.Fields{
 		"otherNodeId": nodeId,
+		"serverTag":   tag,
 	})
 	msgLog.Debug("Sending server message")
 
@@ -52,6 +53,7 @@ func (c *ServerComm) Send(nodeId string, tag any, data any) error {
 func (c *ServerComm) Recv(nodeId string, tag any) (any, error) {
 	msgLog := c.logger.WithFields(log.Fields{
 		"otherNodeId": nodeId,
+		"serverTag":   tag,
 	})
 	msgLog.Debug("Receiving server message")
 
@@ -74,4 +76,40 @@ func (c *ServerComm) Recv(nodeId string, tag any) (any, error) {
 	data := <-recvChan
 
 	return data, nil
+}
+
+type barrierTag struct {
+	Tag any
+}
+
+func init() {
+	gob.Register(barrierTag{})
+}
+
+func (c *ServerComm) Barrier(tag any) error {
+	barrierLog := c.logger.WithFields(log.Fields{
+		"serverTag": tag,
+	})
+	barrierLog.Debug("Synchronizing barrier")
+
+	for nodeId := range c.conn.config.Nodes {
+		if nodeId == c.conn.config.OurNodeId {
+			continue
+		}
+		if err := c.Send(nodeId, barrierTag{tag}, nil); err != nil {
+			barrierLog.WithError(err).Error("Failed to send barrier message")
+			return err
+		}
+	}
+	for nodeId := range c.conn.config.Nodes {
+		if nodeId == c.conn.config.OurNodeId {
+			continue
+		}
+		if _, err := c.Recv(nodeId, barrierTag{tag}); err != nil {
+			barrierLog.WithError(err).Error("Failed to receive barrier message")
+			return err
+		}
+	}
+
+	return nil
 }

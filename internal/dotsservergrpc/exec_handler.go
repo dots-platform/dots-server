@@ -2,6 +2,7 @@ package dotsservergrpc
 
 import (
 	"context"
+	"encoding/gob"
 	"os"
 	"path"
 
@@ -14,6 +15,14 @@ import (
 	"github.com/dtrust-project/dtrust-server/internal/serverconn"
 	"github.com/dtrust-project/dtrust-server/protos/dotspb"
 )
+
+type execBarrierTag struct {
+	InstanceId uuid.UUID
+}
+
+func init() {
+	gob.Register(execBarrierTag{})
+}
 
 func (s *DotsServerGrpc) Exec(ctx context.Context, app *dotspb.App) (*dotspb.Result, error) {
 	ctx, cancel := context.WithCancel(ctx)
@@ -80,6 +89,10 @@ func (s *DotsServerGrpc) Exec(ctx context.Context, app *dotspb.App) (*dotspb.Res
 		return nil, err
 	}
 	defer s.conns.Unregister(serverconn.MsgTypeAppInstance, uuid.Nil)
+
+	// Barrier to ensure all other nodes have registered their communication
+	// channels.
+	s.controlComm.Barrier(execBarrierTag{uuid.Nil})
 
 	// Start app.
 	instance, err := appinstance.ExecApp(ctx, s.config, appConfig.Path, app.GetAppName(), app.GetFuncName(), inputFiles, outputFiles, conns)
