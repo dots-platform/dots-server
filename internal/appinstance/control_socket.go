@@ -122,7 +122,7 @@ func (instance *AppInstance) recvControlMsg() (*ControlMsg, []byte, error) {
 	var payload []byte
 	if controlMsg.PayloadLen > 0 {
 		payload = make([]byte, controlMsg.PayloadLen)
-		if _, err := instance.controlSocket.Read(payload); err != nil {
+		if _, err := io.ReadFull(instance.controlSocket, payload); err != nil {
 			if errors.Is(err, io.EOF) {
 				return nil, nil, err
 			}
