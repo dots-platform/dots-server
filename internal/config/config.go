@@ -22,12 +22,42 @@ type Config struct {
 	NodeRanks map[string]int
 	Nodes     map[string]*NodeConfig `yaml:"nodes"`
 
-	Apps           map[string]*AppConfig `yaml:"apps"`
-	FileStorageDir string                `yaml:"file_storage_dir"`
+	Apps map[string]*AppConfig `yaml:"apps"`
+
+	FileStorageDir string `yaml:"file_storage_dir"`
 
 	OurNodeId     string
 	OurNodeRank   int
 	OurNodeConfig *NodeConfig
+}
+
+func verifyConfig(conf *Config) error {
+	// Verify config.
+	if conf.FileStorageDir == "" {
+		return errors.New("Missing file_storage_dir")
+	}
+
+	// Verify node configs.
+	for _, nodeConfig := range conf.Nodes {
+		if nodeConfig.Addr == "" {
+			return errors.New("Missing addr from node config")
+		}
+		if nodeConfig.Ports == nil {
+			return errors.New("Missing ports from node config")
+		}
+		if len(nodeConfig.Ports) != len(conf.Nodes) {
+			return errors.New("Number of ports in node config not equal to number of nodes")
+		}
+	}
+
+	// Verify app configs.
+	for _, appConfig := range conf.Apps {
+		if appConfig.Path == "" {
+			return errors.New("Missing path from app config")
+		}
+	}
+
+	return nil
 }
 
 func ReadConfig(configPath string, ourNodeId string) (*Config, error) {
@@ -71,6 +101,11 @@ func ReadConfig(configPath string, ourNodeId string) (*Config, error) {
 				}
 			}
 		}
+	}
+
+	// Verify config.
+	if err := verifyConfig(&config); err != nil {
+		return nil, err
 	}
 
 	// Generate ranks for node IDs.
