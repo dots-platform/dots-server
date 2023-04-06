@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"sync"
 
 	"github.com/dtrust-project/dtrust-server/internal/config"
 	"github.com/dtrust-project/dtrust-server/internal/serverconn"
@@ -16,12 +17,15 @@ import (
 )
 
 type AppInstance struct {
-	appName      string
-	funcName     string
-	appLog       log.FieldLogger
-	config       *config.Config
-	serverComm   *serverconn.ServerComm
-	bufferedMsgs map[int]map[int][]byte
+	appName                string
+	funcName               string
+	appLog                 log.FieldLogger
+	config                 *config.Config
+	serverComm             *serverconn.ServerComm
+	bufferedMsgs           map[int]map[int][]byte
+	controlSocket          *net.UnixConn
+	controlSocketSendMutex sync.Mutex
+	controlSocketRecvMutex sync.Mutex
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -69,7 +73,7 @@ func (instance *AppInstance) execute(ctx context.Context, appPath string, appNam
 			}
 		}
 		defer controlSocket.Close()
-		instance.manageControlSocket(appName, funcName, controlSocket.(*net.UnixConn))
+		instance.manageControlSocket(controlSocket.(*net.UnixConn))
 	}()
 
 	// Generate input for DoTS app environment. Per https://pkg.go.dev/os/exec,
