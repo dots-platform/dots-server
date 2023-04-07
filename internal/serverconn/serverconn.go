@@ -1,7 +1,10 @@
 package serverconn
 
 import (
+	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/gob"
 	"errors"
 	"fmt"
@@ -119,7 +122,7 @@ func (c *ServerConn) Establish(conf *config.Config) error {
 	// Set up pairwise TCP connections with all nodes.
 	connChan := make(chan *struct {
 		nodeId string
-		conn   *net.TCPConn
+		conn   net.Conn
 	})
 	errChan := make(chan error)
 	ourRank := conf.NodeRanks[conf.OurNodeId]
@@ -131,29 +134,67 @@ func (c *ServerConn) Establish(conf *config.Config) error {
 				return
 			}
 
+			var tlsConfig *tls.Config
+			if conf.UseTLS {
+				tlsConfig = &tls.Config{
+					Certificates: []tls.Certificate{conf.OurNodeConfig.TLSServerTLSCert},
+					ClientAuth:   tls.RequireAndVerifyClientCert,
+				}
+				if nodeConfig.TLSServerX509Cert != nil {
+					tlsConfig.InsecureSkipVerify = true
+					tlsConfig.ClientAuth = tls.RequireAnyClientCert
+					tlsConfig.VerifyPeerCertificate = func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
+						if !bytes.Equal(rawCerts[0], nodeConfig.TLSServerX509Cert.Raw) {
+							return errors.New("Peer certificate does not match pinned certificate")
+						}
+						return nil
+					}
+				}
+			}
+
 			var conn net.Conn
 			if ourRank < otherRank {
 				// Act as the listener for higher ranks.
-				listener, err := net.Listen("tcp", fmt.Sprintf(":%d", ourConfig.Ports[otherRank]))
-				if err != nil {
-					errChan <- err
-					return
+				var listener net.Listener
+				if conf.UseTLS {
+					l, err := tls.Listen("tcp", fmt.Sprintf(":%d", ourConfig.Ports[otherRank]), tlsConfig)
+					if err != nil {
+						errChan <- err
+						return
+					}
+					listener = l
+				} else {
+					l, err := net.Listen("tcp", fmt.Sprintf(":%d", ourConfig.Ports[otherRank]))
+					if err != nil {
+						errChan <- err
+						return
+					}
+					listener = l
 				}
 				defer listener.Close()
-				conn, err = listener.Accept()
+				c, err := listener.Accept()
 				if err != nil {
 					errChan <- err
 					return
 				}
+				conn = c
 			} else {
 				// Act as dialer for lower ranks.
 				if err := retry.Do(
 					func() error {
-						c, err := net.Dial("tcp", fmt.Sprintf(":%d", nodeConfig.Ports[ourRank]))
-						if err != nil {
-							return err
+						if conf.UseTLS {
+							c, err := tls.Dial("tcp", fmt.Sprintf(":%d", nodeConfig.Ports[ourRank]), tlsConfig)
+							if err != nil {
+								return err
+							}
+							conn = c
+						} else {
+							c, err := net.Dial("tcp", fmt.Sprintf(":%d", nodeConfig.Ports[ourRank]))
+							if err != nil {
+								return err
+							}
+							conn = c
 						}
-						conn = c
 						return nil
 					},
 				); err != nil {
@@ -164,10 +205,10 @@ func (c *ServerConn) Establish(conf *config.Config) error {
 			// Extract socket and output.
 			connChan <- &struct {
 				nodeId string
-				conn   *net.TCPConn
+				conn   net.Conn
 			}{
 				nodeId: nodeId,
-				conn:   conn.(*net.TCPConn),
+				conn:   conn,
 			}
 		}(nodeId, nodeConfig)
 	}
