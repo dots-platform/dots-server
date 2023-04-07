@@ -1,8 +1,13 @@
 package config
 
 import (
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"io/ioutil"
+	"os"
+	"path"
 	"sort"
 
 	"gopkg.in/yaml.v3"
@@ -11,6 +16,16 @@ import (
 type NodeConfig struct {
 	Addr  string `yaml:"addr"`
 	Ports []int  `yaml:"ports"`
+
+	TLSServerCertFile string `yaml:"tls_server_cert_file"`
+	TLSServerKeyFile  string `yaml:"tls_server_key_file"`
+
+	// The parsed x509 cert.
+	TLSServerX509Cert *x509.Certificate
+
+	// The parsed TLS cert, including the private key, only if TLSServerKeyFile
+	// is set.
+	TLSServerTLSCert tls.Certificate
 }
 
 type AppConfig struct {
@@ -25,20 +40,21 @@ type Config struct {
 	Apps map[string]*AppConfig `yaml:"apps"`
 
 	FileStorageDir string `yaml:"file_storage_dir"`
+	UseTLS         bool   `yaml:"use_tls"`
 
 	OurNodeId     string
 	OurNodeRank   int
 	OurNodeConfig *NodeConfig
 }
 
-func verifyConfig(conf *Config) error {
+func verifyConfig(conf *Config, ourNodeId string) error {
 	// Verify config.
 	if conf.FileStorageDir == "" {
 		return errors.New("Missing file_storage_dir")
 	}
 
 	// Verify node configs.
-	for _, nodeConfig := range conf.Nodes {
+	for nodeId, nodeConfig := range conf.Nodes {
 		if nodeConfig.Addr == "" {
 			return errors.New("Missing addr from node config")
 		}
@@ -47,6 +63,14 @@ func verifyConfig(conf *Config) error {
 		}
 		if len(nodeConfig.Ports) != len(conf.Nodes) {
 			return errors.New("Number of ports in node config not equal to number of nodes")
+		}
+		if conf.UseTLS {
+			if nodeConfig.TLSServerCertFile == "" {
+				return errors.New("Missing tls_server_cert_file from node config when use_tls = true")
+			}
+			if nodeId == ourNodeId && nodeConfig.TLSServerKeyFile == "" {
+				return errors.New("Missing tls_server_key_file from our node config when use_tls = true")
+			}
 		}
 	}
 
@@ -104,7 +128,7 @@ func ReadConfig(configPath string, ourNodeId string) (*Config, error) {
 	}
 
 	// Verify config.
-	if err := verifyConfig(&config); err != nil {
+	if err := verifyConfig(&config, ourNodeId); err != nil {
 		return nil, err
 	}
 
@@ -127,6 +151,43 @@ func ReadConfig(configPath string, ourNodeId string) (*Config, error) {
 		return nil, errors.New("Node ID not present in config nodes")
 	}
 	config.OurNodeConfig = config.Nodes[ourNodeId]
+
+	// Load node-specific info.
+	for _, nodeConfig := range config.Nodes {
+		// Load TLS cert (and key if present) if TLS is enabled.
+		if config.UseTLS {
+			certPath := path.Join(path.Dir(configPath), nodeConfig.TLSServerCertFile)
+			if nodeConfig.TLSServerKeyFile == "" {
+				// Load only cert.
+				pemBytes, err := os.ReadFile(certPath)
+				if err != nil {
+					return nil, err
+				}
+				block, _ := pem.Decode(pemBytes)
+				if block == nil {
+					return nil, errors.New("No PEM block in certificate: " + nodeConfig.TLSServerCertFile)
+				}
+				cert, err := x509.ParseCertificate(block.Bytes)
+				if err != nil {
+					return nil, err
+				}
+				nodeConfig.TLSServerX509Cert = cert
+			} else {
+				// Load cert and key.
+				keyPath := path.Join(path.Dir(configPath), nodeConfig.TLSServerKeyFile)
+				tlsCert, err := tls.LoadX509KeyPair(certPath, keyPath)
+				if err != nil {
+					return nil, err
+				}
+				cert, err := x509.ParseCertificate(tlsCert.Certificate[0])
+				if err != nil {
+					return nil, err
+				}
+				nodeConfig.TLSServerTLSCert = tlsCert
+				nodeConfig.TLSServerX509Cert = cert
+			}
+		}
+	}
 
 	return &config, nil
 }
