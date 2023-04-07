@@ -107,6 +107,7 @@ func (c *ServerConn) receiveMessages(nodeId string, decoder *gob.Decoder) {
 		if err := decoder.Decode(&serverMsg); err != nil {
 			connLog.WithError(err).Error("Error reading from server connection")
 			loop = false
+			break
 		}
 		c.handleIncomingMessage(nodeId, &serverMsg)
 	}
