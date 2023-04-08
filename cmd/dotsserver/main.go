@@ -1,11 +1,13 @@
 package main
 
 import (
+	"crypto/tls"
 	"flag"
 	"net"
 
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 
 	"github.com/dtrust-project/dtrust-server/internal/config"
 	"github.com/dtrust-project/dtrust-server/internal/dotsservergrpc"
@@ -44,17 +46,27 @@ func main() {
 		log.WithError(err).Fatal("Error reading config")
 	}
 
-	// Spawn gRPC server.
-	conn, err := net.Listen("tcp", conf.OurNodeConfig.Addr)
-	if err != nil {
-		log.WithError(err).Fatal("Failed to listen")
-	}
-	grpcServer := grpc.NewServer()
+	// Instantiate server instance.
 	dotsServer, err := dotsservergrpc.NewDotsServerGrpc(nodeId, conf)
 	if err != nil {
 		log.WithError(err).Fatal("Failed to instantiate DoTS server")
 	}
 	defer dotsServer.Shutdown()
+
+	// Spawn gRPC service.
+	conn, err := net.Listen("tcp", conf.OurNodeConfig.Addr)
+	if err != nil {
+		log.WithError(err).Fatal("Failed to listen")
+	}
+	grpcOpts := []grpc.ServerOption{}
+	if conf.GRPCSecurity == config.GRPCSecurityTLS {
+		tlsConfig := &tls.Config{
+			Certificates: []tls.Certificate{conf.GRPCTLSCert},
+		}
+		tlsCreds := credentials.NewTLS(tlsConfig)
+		grpcOpts = append(grpcOpts, grpc.Creds(tlsCreds))
+	}
+	grpcServer := grpc.NewServer(grpcOpts...)
 	dotspb.RegisterDecExecServer(grpcServer, dotsServer)
 
 	// Listen.

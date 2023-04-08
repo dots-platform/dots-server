@@ -21,6 +21,13 @@ const (
 	PeerSecurityTLS               = "tls"
 )
 
+type GRPCSecurity string
+
+const (
+	GRPCSecurityNone GRPCSecurity = "none"
+	GRPCSecurityTLS               = "tls"
+)
+
 type NodeConfig struct {
 	Addr  string `yaml:"addr"`
 	Ports []int  `yaml:"ports"`
@@ -28,7 +35,7 @@ type NodeConfig struct {
 	PeerTLSCertFile    string `yaml:"peer_tls_cert_file"`
 	PeerTLSCertKeyFile string `yaml:"peer_tls_cert_key_file"`
 
-	// The parsed x509 cert.
+	// The parsed X.509 cert.
 	PeerTLSCertX509 *x509.Certificate
 
 	// The parsed TLS cert, including the private key, only if PeerTLSCertKeyFile
@@ -47,8 +54,14 @@ type Config struct {
 
 	Apps map[string]*AppConfig `yaml:"apps"`
 
-	FileStorageDir string       `yaml:"file_storage_dir"`
-	PeerSecurity   PeerSecurity `yaml:"peer_security"`
+	FileStorageDir string `yaml:"file_storage_dir"`
+
+	PeerSecurity PeerSecurity `yaml:"peer_security"`
+
+	GRPCSecurity       GRPCSecurity `yaml:"grpc_security"`
+	GRPCTLSCertFile    string       `yaml:"grpc_tls_cert_file"`
+	GRPCTLSCertKeyFile string       `yaml:"grpc_tls_cert_key_file"`
+	GRPCTLSCert        tls.Certificate
 
 	OurNodeId     string
 	OurNodeRank   int
@@ -66,6 +79,20 @@ func verifyConfig(conf *Config, ourNodeId string) error {
 	case PeerSecurityNone, PeerSecurityTLS:
 	default:
 		return fmt.Errorf("Invalid value for peer_security: %s", conf.PeerSecurity)
+	}
+	switch conf.GRPCSecurity {
+	case "":
+		return errors.New("Missing grpc_security")
+	case GRPCSecurityNone:
+	case GRPCSecurityTLS:
+		if conf.GRPCTLSCertFile == "" {
+			return errors.New("Missing grpc_tls_cert_file when grpc_security = tls")
+		}
+		if conf.GRPCTLSCertKeyFile == "" {
+			return errors.New("Missing grpc_tls_cert_key_file when grpc_security = tls")
+		}
+	default:
+		return fmt.Errorf("Invalid value for grpc_security: %s", conf.GRPCSecurity)
 	}
 
 	// Verify node configs.
@@ -166,6 +193,17 @@ func ReadConfig(configPath string, ourNodeId string) (*Config, error) {
 		return nil, errors.New("Node ID not present in config nodes")
 	}
 	config.OurNodeConfig = config.Nodes[ourNodeId]
+
+	// Load GRPC cert if necessary.
+	if config.GRPCSecurity == GRPCSecurityTLS {
+		certPath := path.Join(path.Dir(configPath), config.GRPCTLSCertFile)
+		keyPath := path.Join(path.Dir(configPath), config.GRPCTLSCertKeyFile)
+		tlsCert, err := tls.LoadX509KeyPair(certPath, keyPath)
+		if err != nil {
+			return nil, err
+		}
+		config.GRPCTLSCert = tlsCert
+	}
 
 	// Load node-specific info.
 	for _, nodeConfig := range config.Nodes {
