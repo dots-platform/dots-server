@@ -137,14 +137,14 @@ func (c *ServerConn) Establish(conf *config.Config) error {
 			var tlsConfig *tls.Config
 			if conf.UseTLS {
 				tlsConfig = &tls.Config{
-					Certificates: []tls.Certificate{conf.OurNodeConfig.TLSServerTLSCert},
+					Certificates: []tls.Certificate{conf.OurNodeConfig.PeerTLSCertTLS},
 					ClientAuth:   tls.RequireAndVerifyClientCert,
 				}
-				if nodeConfig.TLSServerX509Cert != nil {
+				if nodeConfig.PeerTLSCertX509 != nil {
 					tlsConfig.InsecureSkipVerify = true
 					tlsConfig.ClientAuth = tls.RequireAnyClientCert
 					tlsConfig.VerifyPeerCertificate = func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
-						if !bytes.Equal(rawCerts[0], nodeConfig.TLSServerX509Cert.Raw) {
+						if !bytes.Equal(rawCerts[0], nodeConfig.PeerTLSCertX509.Raw) {
 							return errors.New("Peer certificate does not match pinned certificate")
 						}
 						return nil
