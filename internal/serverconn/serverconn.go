@@ -136,6 +136,8 @@ func (c *ServerConn) Establish(conf *config.Config) error {
 
 			var tlsConfig *tls.Config
 			if conf.PeerSecurity == config.PeerSecurityTLS {
+				// TODO Add server name to config somehow to authenticate server
+				// name as part of TLS connection.
 				tlsConfig = &tls.Config{
 					Certificates: []tls.Certificate{conf.OurNodeConfig.PeerTLSCertTLS},
 					ClientAuth:   tls.RequireAndVerifyClientCert,
