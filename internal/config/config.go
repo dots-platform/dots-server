@@ -5,12 +5,20 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"io/ioutil"
 	"os"
 	"path"
 	"sort"
 
 	"gopkg.in/yaml.v3"
+)
+
+type PeerSecurity string
+
+const (
+	PeerSecurityNone PeerSecurity = "none"
+	PeerSecurityTLS               = "tls"
 )
 
 type NodeConfig struct {
@@ -39,8 +47,8 @@ type Config struct {
 
 	Apps map[string]*AppConfig `yaml:"apps"`
 
-	FileStorageDir string `yaml:"file_storage_dir"`
-	UseTLS         bool   `yaml:"use_tls"`
+	FileStorageDir string       `yaml:"file_storage_dir"`
+	PeerSecurity   PeerSecurity `yaml:"peer_security"`
 
 	OurNodeId     string
 	OurNodeRank   int
@@ -51,6 +59,13 @@ func verifyConfig(conf *Config, ourNodeId string) error {
 	// Verify config.
 	if conf.FileStorageDir == "" {
 		return errors.New("Missing file_storage_dir")
+	}
+	switch conf.PeerSecurity {
+	case "":
+		return errors.New("Missing peer_security")
+	case PeerSecurityNone, PeerSecurityTLS:
+	default:
+		return fmt.Errorf("Invalid value for peer_security: %s", conf.PeerSecurity)
 	}
 
 	// Verify node configs.
@@ -64,12 +79,12 @@ func verifyConfig(conf *Config, ourNodeId string) error {
 		if len(nodeConfig.Ports) != len(conf.Nodes) {
 			return errors.New("Number of ports in node config not equal to number of nodes")
 		}
-		if conf.UseTLS {
+		if conf.PeerSecurity == PeerSecurityTLS {
 			if nodeConfig.PeerTLSCertFile == "" {
-				return errors.New("Missing peer_tls_cert_file from node config when use_tls = true")
+				return errors.New("Missing peer_tls_cert_file from node config when peer_security = tls")
 			}
 			if nodeId == ourNodeId && nodeConfig.PeerTLSCertKeyFile == "" {
-				return errors.New("Missing peer_tls_key_file from our node config when use_tls = true")
+				return errors.New("Missing peer_tls_key_file from our node config when peer_security = tls")
 			}
 		}
 	}
@@ -155,7 +170,7 @@ func ReadConfig(configPath string, ourNodeId string) (*Config, error) {
 	// Load node-specific info.
 	for _, nodeConfig := range config.Nodes {
 		// Load TLS cert (and key if present) if TLS is enabled.
-		if config.UseTLS {
+		if config.PeerSecurity == PeerSecurityTLS {
 			certPath := path.Join(path.Dir(configPath), nodeConfig.PeerTLSCertFile)
 			if nodeConfig.PeerTLSCertKeyFile == "" {
 				// Load only cert.

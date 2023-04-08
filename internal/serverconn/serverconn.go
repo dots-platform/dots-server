@@ -135,7 +135,7 @@ func (c *ServerConn) Establish(conf *config.Config) error {
 			}
 
 			var tlsConfig *tls.Config
-			if conf.UseTLS {
+			if conf.PeerSecurity == config.PeerSecurityTLS {
 				tlsConfig = &tls.Config{
 					Certificates: []tls.Certificate{conf.OurNodeConfig.PeerTLSCertTLS},
 					ClientAuth:   tls.RequireAndVerifyClientCert,
@@ -156,7 +156,7 @@ func (c *ServerConn) Establish(conf *config.Config) error {
 			if ourRank < otherRank {
 				// Act as the listener for higher ranks.
 				var listener net.Listener
-				if conf.UseTLS {
+				if conf.PeerSecurity == config.PeerSecurityTLS {
 					l, err := tls.Listen("tcp", fmt.Sprintf(":%d", ourConfig.Ports[otherRank]), tlsConfig)
 					if err != nil {
 						errChan <- err
@@ -182,7 +182,7 @@ func (c *ServerConn) Establish(conf *config.Config) error {
 				// Act as dialer for lower ranks.
 				if err := retry.Do(
 					func() error {
-						if conf.UseTLS {
+						if conf.PeerSecurity == config.PeerSecurityTLS {
 							c, err := tls.Dial("tcp", fmt.Sprintf(":%d", nodeConfig.Ports[ourRank]), tlsConfig)
 							if err != nil {
 								return err
