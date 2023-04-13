@@ -9,7 +9,6 @@ import (
 
 	"github.com/dtrust-project/dotspb/go/dotspb"
 	"github.com/google/uuid"
-	"golang.org/x/exp/slog"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 
@@ -30,7 +29,7 @@ func (s *DotsServerGrpc) Exec(ctx context.Context, app *dotspb.App) (*dotspb.Res
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	ctx = util.ContextWithLogger(ctx, slog.With(
+	ctx = util.ContextWithLogger(ctx, util.LoggerFromContext(ctx).With(
 		"appName", app.GetAppName(),
 		"appFuncName", app.GetFuncName(),
 	))
@@ -53,6 +52,10 @@ func (s *DotsServerGrpc) Exec(ctx context.Context, app *dotspb.App) (*dotspb.Res
 	if !ok {
 		return nil, grpc.Errorf(codes.NotFound, "App with name not found")
 	}
+
+	ctx = util.ContextWithLogger(ctx, util.LoggerFromContext(ctx).With(
+		"requestId", requestId,
+	))
 
 	util.LoggerFromContext(ctx).Debug("Executing appliation")
 
