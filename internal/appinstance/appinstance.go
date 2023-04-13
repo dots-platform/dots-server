@@ -9,17 +9,18 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/dtrust-project/dtrust-server/internal/config"
-	"github.com/dtrust-project/dtrust-server/internal/serverconn"
-	log "github.com/sirupsen/logrus"
+	"golang.org/x/exp/slog"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+
+	"github.com/dtrust-project/dtrust-server/internal/config"
+	"github.com/dtrust-project/dtrust-server/internal/serverconn"
 )
 
 type AppInstance struct {
 	appName                string
 	funcName               string
-	appLog                 log.FieldLogger
+	appLog                 *slog.Logger
 	config                 *config.Config
 	serverComm             *serverconn.ServerComm
 	bufferedMsgs           map[int]map[int][]byte
@@ -40,7 +41,7 @@ func (instance *AppInstance) execute(ctx context.Context, appPath string, appNam
 	cmd.ExtraFiles = append(cmd.ExtraFiles, outputFiles...)
 	stdin, err := cmd.StdinPipe()
 	if err := cmd.Start(); err != nil {
-		instance.appLog.WithError(err).Error("Error starting application")
+		instance.appLog.Error("Error starting application", "err", err)
 		instance.done <- grpc.Errorf(codes.Internal, "Application error")
 		return
 	}
@@ -52,7 +53,7 @@ func (instance *AppInstance) execute(ctx context.Context, appPath string, appNam
 	os.Remove(controlSocketPath)
 	controlConn, err := listenConfig.Listen(ctx, "unix", controlSocketPath)
 	if err != nil {
-		instance.appLog.WithError(err).Error("Error creating control socket listener")
+		instance.appLog.Error("Error creating control socket listener", "err", err)
 		instance.done <- grpc.Errorf(codes.Internal, "Application error")
 		return
 	}
@@ -68,7 +69,7 @@ func (instance *AppInstance) execute(ctx context.Context, appPath string, appNam
 			case <-ctx.Done():
 				return
 			default:
-				instance.appLog.WithError(err).Error("Error accepting control socket connection")
+				instance.appLog.Error("Error accepting control socket connection", "err", err)
 				return
 			}
 		}
@@ -100,19 +101,19 @@ func (instance *AppInstance) execute(ctx context.Context, appPath string, appNam
 
 	// Write environment to stdin.
 	if err != nil {
-		instance.appLog.WithError(err).Error("Error opening application stdin pipe")
+		instance.appLog.Error("Error opening application stdin pipe", "err", err)
 		instance.done <- err
 		return
 	}
 	if _, err := stdin.Write([]byte(dotsEnvInput)); err != nil {
-		instance.appLog.WithError(err).Error("Error writing environment to application stdin")
+		instance.appLog.Error("Error writing environment to application stdin", "err", err)
 		instance.done <- err
 		return
 	}
 
 	// Wait for application to finish.
 	if err := cmd.Wait(); err != nil {
-		instance.appLog.WithError(err).Warn("Application exited with non-zero return code")
+		instance.appLog.Warn("Application exited with non-zero return code", "err", err)
 		instance.done <- err
 		return
 	}
@@ -129,10 +130,10 @@ func ExecApp(ctx context.Context, conf *config.Config, appPath string, appName s
 	instance := &AppInstance{
 		appName:  appName,
 		funcName: funcName,
-		appLog: log.WithFields(log.Fields{
-			"appName":     appName,
-			"appFuncName": funcName,
-		}),
+		appLog: slog.With(
+			"appName", appName,
+			"appFuncName", funcName,
+		),
 		config:     conf,
 		serverComm: serverComm,
 		ctx:        ctx,

@@ -7,7 +7,7 @@ import (
 	"path"
 
 	"github.com/google/uuid"
-	log "github.com/sirupsen/logrus"
+	"golang.org/x/exp/slog"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 
@@ -34,10 +34,10 @@ func (s *DotsServerGrpc) Exec(ctx context.Context, app *dotspb.App) (*dotspb.Res
 		return nil, grpc.Errorf(codes.NotFound, "App with name not found")
 	}
 
-	appLog := log.WithFields(log.Fields{
-		"appName":     app.GetAppName(),
-		"appFuncName": app.GetFuncName(),
-	})
+	appLog := slog.With(
+		"appName", app.GetAppName(),
+		"appFuncName", app.GetFuncName(),
+	)
 
 	appLog.Debug("Executing appliation")
 
@@ -48,9 +48,9 @@ func (s *DotsServerGrpc) Exec(ctx context.Context, app *dotspb.App) (*dotspb.Res
 		inputFile, err := os.Open(inputPath)
 		if err != nil {
 			if !os.IsNotExist(err) {
-				appLog.WithFields(log.Fields{
-					"blobPath": inputPath,
-				}).WithError(err).Error("Error opening input file")
+				appLog.Error("Error opening input file", "err", err,
+					"blobPath", inputPath,
+				)
 				return nil, err
 			}
 
@@ -68,9 +68,9 @@ func (s *DotsServerGrpc) Exec(ctx context.Context, app *dotspb.App) (*dotspb.Res
 		outputFile, err := os.Create(outputPath)
 		if err != nil {
 			if !os.IsNotExist(err) {
-				appLog.WithFields(log.Fields{
-					"blobPath": outputPath,
-				}).WithError(err).Error("Error opening output file")
+				appLog.Error("Error opening output file", "err", err,
+					"blobPath", outputPath,
+				)
 				return nil, grpc.Errorf(codes.Internal, internalErrMsg)
 			}
 
@@ -85,7 +85,7 @@ func (s *DotsServerGrpc) Exec(ctx context.Context, app *dotspb.App) (*dotspb.Res
 	// TODO Use an actual ID rather than uuid.Nil to disambiguate registrations.
 	conns, err := s.conns.Register(ctx, serverconn.MsgTypeAppInstance, uuid.Nil)
 	if err != nil {
-		appLog.WithError(err).Error("Error registering app instance server connection")
+		appLog.Error("Error registering app instance server connection", "err", err)
 		return nil, err
 	}
 	defer s.conns.Unregister(serverconn.MsgTypeAppInstance, uuid.Nil)
@@ -97,11 +97,11 @@ func (s *DotsServerGrpc) Exec(ctx context.Context, app *dotspb.App) (*dotspb.Res
 	// Start app.
 	instance, err := appinstance.ExecApp(ctx, s.config, appConfig.Path, app.GetAppName(), app.GetFuncName(), inputFiles, outputFiles, conns)
 	if err != nil {
-		appLog.WithError(err).Error("Error spawning app instance")
+		appLog.Error("Error spawning app instance", "err", err)
 		return nil, grpc.Errorf(codes.Internal, internalErrMsg)
 	}
 	if err := instance.Wait(); err != nil {
-		appLog.WithError(err).Error("Error spawning app instance")
+		appLog.Error("Error spawning app instance", "err", err)
 		return nil, grpc.Errorf(codes.Internal, internalErrMsg)
 	}
 
