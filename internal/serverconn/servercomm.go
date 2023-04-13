@@ -5,7 +5,7 @@ import (
 	"sync"
 
 	"github.com/google/uuid"
-	log "github.com/sirupsen/logrus"
+	"golang.org/x/exp/slog"
 )
 
 type serverMsg struct {
@@ -21,7 +21,7 @@ type ServerComm struct {
 	recvBuf   map[string]map[any]chan any
 	recvMutex sync.Mutex
 	conn      *ServerConn
-	logger    log.FieldLogger
+	logger    *slog.Logger
 }
 
 const recvBufSize = 256
@@ -31,10 +31,10 @@ func init() {
 }
 
 func (c *ServerComm) Send(nodeId string, tag any, data any) error {
-	msgLog := c.logger.WithFields(log.Fields{
-		"otherNodeId": nodeId,
-		"serverTag":   tag,
-	})
+	msgLog := c.logger.With(
+		"otherNodeId", nodeId,
+		"serverTag", tag,
+	)
 	msgLog.Debug("Sending server message")
 
 	if err := c.conn.encoders[nodeId].Encode(&serverMsg{
@@ -43,7 +43,7 @@ func (c *ServerComm) Send(nodeId string, tag any, data any) error {
 		Tag:       tag,
 		Data:      data,
 	}); err != nil {
-		msgLog.WithError(err).Error("Failed to send server message")
+		msgLog.Error("Failed to send server message", "err", err)
 		return err
 	}
 
@@ -51,10 +51,10 @@ func (c *ServerComm) Send(nodeId string, tag any, data any) error {
 }
 
 func (c *ServerComm) Recv(nodeId string, tag any) (any, error) {
-	msgLog := c.logger.WithFields(log.Fields{
-		"otherNodeId": nodeId,
-		"serverTag":   tag,
-	})
+	msgLog := c.logger.With(
+		"otherNodeId", nodeId,
+		"serverTag", tag,
+	)
 	msgLog.Debug("Receiving server message")
 
 	// TODO Figure out some accounting scheme to mitigate DoS attacks where the
@@ -87,9 +87,9 @@ func init() {
 }
 
 func (c *ServerComm) Barrier(tag any) error {
-	barrierLog := c.logger.WithFields(log.Fields{
-		"serverTag": tag,
-	})
+	barrierLog := c.logger.With(
+		"serverTag", tag,
+	)
 	barrierLog.Debug("Synchronizing barrier")
 
 	for nodeId := range c.conn.config.Nodes {
@@ -97,7 +97,7 @@ func (c *ServerComm) Barrier(tag any) error {
 			continue
 		}
 		if err := c.Send(nodeId, barrierTag{tag}, nil); err != nil {
-			barrierLog.WithError(err).Error("Failed to send barrier message")
+			barrierLog.Error("Failed to send barrier message", "err", err)
 			return err
 		}
 	}
@@ -106,7 +106,7 @@ func (c *ServerComm) Barrier(tag any) error {
 			continue
 		}
 		if _, err := c.Recv(nodeId, barrierTag{tag}); err != nil {
-			barrierLog.WithError(err).Error("Failed to receive barrier message")
+			barrierLog.Error("Failed to receive barrier message", "err", err)
 			return err
 		}
 	}
