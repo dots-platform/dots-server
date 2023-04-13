@@ -14,7 +14,7 @@ import (
 
 func (s *DotsServerGrpc) UploadBlob(ctx context.Context, blob *dotspb.Blob) (*dotspb.Result, error) {
 	// Make directory for the blob.
-	blobDir := path.Join(s.config.FileStorageDir, s.nodeId, blob.GetClientId())
+	blobDir := path.Join(s.config.FileStorageDir, s.config.OurNodeId, blob.GetClientId())
 	if err := os.MkdirAll(blobDir, 0755); err != nil {
 		log.WithFields(log.Fields{
 			"blobDir": blobDir,
@@ -36,7 +36,7 @@ func (s *DotsServerGrpc) UploadBlob(ctx context.Context, blob *dotspb.Blob) (*do
 
 func (s *DotsServerGrpc) RetrieveBlob(ctx context.Context, blob *dotspb.Blob) (*dotspb.Blob, error) {
 	// Attempt to read blob data.
-	blobPath := path.Join(s.config.FileStorageDir, s.nodeId, blob.GetClientId(), blob.GetKey())
+	blobPath := path.Join(s.config.FileStorageDir, s.config.OurNodeId, blob.GetClientId(), blob.GetKey())
 	blobData, err := os.ReadFile(blobPath)
 	if err != nil {
 		if !os.IsNotExist(err) {
