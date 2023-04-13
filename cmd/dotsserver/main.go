@@ -6,13 +6,13 @@ import (
 	"net"
 	"os"
 
+	"github.com/dtrust-project/dotspb/go/dotspb"
 	"golang.org/x/exp/slog"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
 	"github.com/dtrust-project/dtrust-server/internal/config"
 	"github.com/dtrust-project/dtrust-server/internal/dotsservergrpc"
-	"github.com/dtrust-project/dtrust-server/protos/dotspb"
 )
 
 var programLogLevel = new(slog.LevelVar)

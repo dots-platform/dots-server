@@ -3,12 +3,12 @@ package dotsservergrpc
 import (
 	"context"
 
+	"github.com/dtrust-project/dotspb/go/dotspb"
 	"github.com/google/uuid"
 	"golang.org/x/exp/slog"
 
 	"github.com/dtrust-project/dtrust-server/internal/config"
 	"github.com/dtrust-project/dtrust-server/internal/serverconn"
-	"github.com/dtrust-project/dtrust-server/protos/dotspb"
 )
 
 const internalErrMsg = "Internal error"
