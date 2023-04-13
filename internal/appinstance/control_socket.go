@@ -2,6 +2,7 @@ package appinstance
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/gob"
 	"errors"
@@ -12,7 +13,7 @@ import (
 	"syscall"
 
 	"github.com/avast/retry-go"
-	"golang.org/x/exp/slog"
+	"github.com/dtrust-project/dtrust-server/internal/util"
 )
 
 const ControlMsgSize = 64
@@ -86,25 +87,27 @@ func (instance *AppInstance) sendFile(file *os.File) error {
 	return nil
 }
 
-func (instance *AppInstance) sendControlMsg(controlMsg *ControlMsg, payload []byte) error {
+func (instance *AppInstance) sendControlMsg(ctx context.Context, controlMsg *ControlMsg, payload []byte) error {
 	instance.controlSocketSendMutex.Lock()
 	defer instance.controlSocketSendMutex.Unlock()
 
 	// Send header.
 	controlMsg.PayloadLen = uint32(len(payload))
 	if err := binary.Write(instance.controlSocket, binary.BigEndian, controlMsg); err != nil {
+		util.LoggerFromContext(ctx).Error("Failed to write control message", "err", err)
 		return err
 	}
 
 	// Send payload.
 	if _, err := instance.controlSocket.Write(payload); err != nil {
+		util.LoggerFromContext(ctx).Error("Failed to write control message payload", "err", err)
 		return err
 	}
 
 	return nil
 }
 
-func (instance *AppInstance) recvControlMsg() (*ControlMsg, []byte, error) {
+func (instance *AppInstance) recvControlMsg(ctx context.Context) (*ControlMsg, []byte, error) {
 	instance.controlSocketRecvMutex.Lock()
 	defer instance.controlSocketRecvMutex.Unlock()
 
@@ -114,7 +117,7 @@ func (instance *AppInstance) recvControlMsg() (*ControlMsg, []byte, error) {
 		if errors.Is(err, io.EOF) {
 			return nil, nil, err
 		}
-		instance.appLog.Error("Failed to read control message", "err", err)
+		util.LoggerFromContext(ctx).Error("Failed to read control message", "err", err)
 		return nil, nil, err
 	}
 
@@ -126,7 +129,7 @@ func (instance *AppInstance) recvControlMsg() (*ControlMsg, []byte, error) {
 			if errors.Is(err, io.EOF) {
 				return nil, nil, err
 			}
-			instance.appLog.Error("Failed to read control message payload", "err", err)
+			util.LoggerFromContext(ctx).Error("Failed to read control message payload", "err", err)
 			return nil, nil, err
 		}
 	}
@@ -134,11 +137,11 @@ func (instance *AppInstance) recvControlMsg() (*ControlMsg, []byte, error) {
 	return &controlMsg, payload, nil
 }
 
-func (instance *AppInstance) handleRequestSocketControlMsg(controlMsg *ControlMsg, cmdLog *slog.Logger) {
+func (instance *AppInstance) handleRequestSocketControlMsg(ctx context.Context, controlMsg *ControlMsg) {
 	var data ControlMsgDataRequestSocket
 	dataReader := bytes.NewReader(controlMsg.Data[:])
 	if err := binary.Read(dataReader, binary.BigEndian, &data); err != nil {
-		cmdLog.Error("Failed to unmarshal binary data", "err", err)
+		util.LoggerFromContext(ctx).Error("Failed to unmarshal binary data", "err", err)
 	}
 
 	ourRank := instance.config.NodeRanks[instance.config.OurNodeId]
@@ -151,15 +154,15 @@ func (instance *AppInstance) handleRequestSocketControlMsg(controlMsg *ControlMs
 	if ourRank < otherRank {
 		// Act as the listener for higher ranks.
 		var listenConfig net.ListenConfig
-		listener, err := listenConfig.Listen(instance.ctx, "tcp", fmt.Sprintf(":%d", ourConfig.Ports[otherRank]))
+		listener, err := listenConfig.Listen(ctx, "tcp", fmt.Sprintf(":%d", ourConfig.Ports[otherRank]))
 		if err != nil {
-			cmdLog.Error("Failed to listen", "err", err)
+			util.LoggerFromContext(ctx).Error("Failed to listen", "err", err)
 			return
 		}
 		defer listener.Close()
 		conn, err = listener.Accept()
 		if err != nil {
-			cmdLog.Error("Failed to listen", "err", err)
+			util.LoggerFromContext(ctx).Error("Failed to listen", "err", err)
 			return
 		}
 	} else {
@@ -167,16 +170,16 @@ func (instance *AppInstance) handleRequestSocketControlMsg(controlMsg *ControlMs
 		var dialer net.Dialer
 		if err := retry.Do(
 			func() error {
-				c, err := dialer.DialContext(instance.ctx, "tcp", fmt.Sprintf(":%d", otherConfig.Ports[ourRank]))
+				c, err := dialer.DialContext(ctx, "tcp", fmt.Sprintf(":%d", otherConfig.Ports[ourRank]))
 				if err != nil {
 					return err
 				}
 				conn = c
 				return nil
 			},
-			retry.Context(instance.ctx),
+			retry.Context(ctx),
 		); err != nil {
-			cmdLog.Error("Failed to dial", "err", err)
+			util.LoggerFromContext(ctx).Error("Failed to dial", "err", err)
 		}
 	}
 	defer conn.Close()
@@ -184,26 +187,26 @@ func (instance *AppInstance) handleRequestSocketControlMsg(controlMsg *ControlMs
 	// Pass socket through control socket.
 	file, err := conn.(*net.TCPConn).File()
 	if err != nil {
-		cmdLog.Error("Failed to get TCP file", "err", err)
+		util.LoggerFromContext(ctx).Error("Failed to get TCP file", "err", err)
 		return
 	}
 	defer file.Close()
 	if err := instance.sendFile(file); err != nil {
-		cmdLog.Error("Failed to get send TCP through control socket", "err", err)
+		util.LoggerFromContext(ctx).Error("Failed to get send TCP through control socket", "err", err)
 		return
 	}
 }
 
-func (instance *AppInstance) handleMsgSendControlMsg(controlMsg *ControlMsg, payload []byte, cmdLog *slog.Logger) {
+func (instance *AppInstance) handleMsgSendControlMsg(ctx context.Context, controlMsg *ControlMsg, payload []byte) {
 	var data ControlMsgDataMsgSend
 	dataReader := bytes.NewReader(controlMsg.Data[:])
 	if err := binary.Read(dataReader, binary.BigEndian, &data); err != nil {
-		cmdLog.Error("Failed to unmarshal binary data", "err", err)
+		util.LoggerFromContext(ctx).Error("Failed to unmarshal binary data", "err", err)
 		return
 	}
 
 	if int(data.Recipient) >= len(instance.config.NodeIds) {
-		cmdLog.Warn("Application issued invalid command arguments")
+		util.LoggerFromContext(ctx).Warn("Application issued invalid command arguments")
 		return
 	}
 
@@ -212,16 +215,16 @@ func (instance *AppInstance) handleMsgSendControlMsg(controlMsg *ControlMsg, pay
 	instance.serverComm.Send(recipientId, appMsgTag{int(data.Tag)}, payload)
 }
 
-func (instance *AppInstance) handleMsgRecvControlMsg(controlMsg *ControlMsg, cmdLog *slog.Logger) {
+func (instance *AppInstance) handleMsgRecvControlMsg(ctx context.Context, controlMsg *ControlMsg) {
 	var data ControlMsgDataMsgRecv
 	dataReader := bytes.NewReader(controlMsg.Data[:])
 	if err := binary.Read(dataReader, binary.BigEndian, &data); err != nil {
-		cmdLog.Error("Failed to unmarshal binary data", "err", err)
+		util.LoggerFromContext(ctx).Error("Failed to unmarshal binary data", "err", err)
 		return
 	}
 
 	if int(data.Sender) >= len(instance.config.NodeIds) {
-		cmdLog.Warn("Application issued invalid command arguments")
+		util.LoggerFromContext(ctx).Warn("Application issued invalid command arguments")
 		return
 	}
 
@@ -229,7 +232,7 @@ func (instance *AppInstance) handleMsgRecvControlMsg(controlMsg *ControlMsg, cmd
 		senderId := instance.config.NodeIds[data.Sender]
 		recvPayload, err := instance.serverComm.Recv(senderId, appMsgTag{int(data.Tag)})
 		if err != nil {
-			cmdLog.Error("Failed to receive", "err", err)
+			util.LoggerFromContext(ctx).Error("Failed to receive", "err", err)
 			return
 		}
 		payload := recvPayload.([]byte)
@@ -237,38 +240,41 @@ func (instance *AppInstance) handleMsgRecvControlMsg(controlMsg *ControlMsg, cmd
 		respMsg := ControlMsg{
 			Type: ControlMsgTypeMsgRecvResp,
 		}
-		if err := instance.sendControlMsg(&respMsg, payload); err != nil {
-			cmdLog.Error("Error sending MSG_RECV response data", "err", err)
+		if err := instance.sendControlMsg(ctx, &respMsg, payload); err != nil {
+			util.LoggerFromContext(ctx).Error("Error sending MSG_RECV response data", "err", err)
 			return
 		}
 	}()
 }
 
-func (instance *AppInstance) manageControlSocket(controlSocket *net.UnixConn) {
+func (instance *AppInstance) handleControlMsg(ctx context.Context, controlSocket *net.UnixConn, controlMsg *ControlMsg, payload []byte) {
+	cmdCtx := util.ContextWithLogger(ctx, util.LoggerFromContext(ctx).With(
+		"cmd", controlMsg.Type,
+		"cmdPayloadLen", controlMsg.PayloadLen,
+	))
+	util.LoggerFromContext(cmdCtx).Debug("Received control command")
+
+	// Dispatch command.
+	switch controlMsg.Type {
+	case ControlMsgTypeRequestSocket:
+		instance.handleRequestSocketControlMsg(cmdCtx, controlMsg)
+	case ControlMsgTypeMsgSend:
+		instance.handleMsgSendControlMsg(cmdCtx, controlMsg, payload)
+	case ControlMsgTypeMsgRecv:
+		instance.handleMsgRecvControlMsg(cmdCtx, controlMsg)
+	default:
+		util.LoggerFromContext(cmdCtx).Warn("Application issued invalid control message type")
+	}
+}
+
+func (instance *AppInstance) manageControlSocket(ctx context.Context, controlSocket *net.UnixConn) {
 	instance.controlSocket = controlSocket
 
 	for {
-		controlMsg, payload, err := instance.recvControlMsg()
+		controlMsg, payload, err := instance.recvControlMsg(ctx)
 		if err != nil {
 			break
 		}
-
-		cmdLog := instance.appLog.With(
-			"cmd", controlMsg.Type,
-			"cmdPayloadLen", controlMsg.PayloadLen,
-		)
-		cmdLog.Debug("Received control command")
-
-		// Dispatch command.
-		switch controlMsg.Type {
-		case ControlMsgTypeRequestSocket:
-			instance.handleRequestSocketControlMsg(controlMsg, cmdLog)
-		case ControlMsgTypeMsgSend:
-			instance.handleMsgSendControlMsg(controlMsg, payload, cmdLog)
-		case ControlMsgTypeMsgRecv:
-			instance.handleMsgRecvControlMsg(controlMsg, cmdLog)
-		default:
-			cmdLog.Warn("Application issued invalid control message type")
-		}
+		instance.handleControlMsg(ctx, controlSocket, controlMsg, payload)
 	}
 }
