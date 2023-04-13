@@ -4,8 +4,9 @@ import (
 	"crypto/tls"
 	"flag"
 	"net"
+	"os"
 
-	log "github.com/sirupsen/logrus"
+	"golang.org/x/exp/slog"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
@@ -13,6 +14,8 @@ import (
 	"github.com/dtrust-project/dtrust-server/internal/dotsservergrpc"
 	"github.com/dtrust-project/dtrust-server/protos/dotspb"
 )
+
+var programLogLevel = new(slog.LevelVar)
 
 func main() {
 	// Create and parse arguments.
@@ -28,35 +31,42 @@ func main() {
 		return
 	}
 	switch logLevel {
-	case "fatal":
-		log.SetLevel(log.FatalLevel)
 	case "error":
-		log.SetLevel(log.ErrorLevel)
+		programLogLevel.Set(slog.LevelError)
 	case "warn":
-		log.SetLevel(log.WarnLevel)
+		programLogLevel.Set(slog.LevelWarn)
 	case "info":
-		log.SetLevel(log.InfoLevel)
+		programLogLevel.Set(slog.LevelInfo)
 	case "debug":
-		log.SetLevel(log.DebugLevel)
+		programLogLevel.Set(slog.LevelDebug)
 	}
+
+	// Configure logger
+	handlerOptions := &slog.HandlerOptions{
+		Level: programLogLevel,
+	}
+	slog.SetDefault(slog.New(handlerOptions.NewTextHandler(os.Stderr)))
 
 	// Get config.
 	conf, err := config.ReadConfig(configPath, nodeId)
 	if err != nil {
-		log.WithError(err).Fatal("Error reading config")
+		slog.Error("Error reading config", "err", err)
+		os.Exit(1)
 	}
 
 	// Instantiate server instance.
 	dotsServer, err := dotsservergrpc.NewDotsServerGrpc(nodeId, conf)
 	if err != nil {
-		log.WithError(err).Fatal("Failed to instantiate DoTS server")
+		slog.Error("Failed to instantiate DoTS server", "err", err)
+		os.Exit(1)
 	}
 	defer dotsServer.Shutdown()
 
 	// Spawn gRPC service.
 	conn, err := net.Listen("tcp", conf.OurNodeConfig.Addr)
 	if err != nil {
-		log.WithError(err).Fatal("Failed to listen")
+		slog.Error("Failed to listen", "err", err)
+		os.Exit(1)
 	}
 	grpcOpts := []grpc.ServerOption{}
 	if conf.GRPCSecurity == config.GRPCSecurityTLS {
@@ -71,6 +81,7 @@ func main() {
 
 	// Listen.
 	if err := grpcServer.Serve(conn); err != nil {
-		log.WithError(err).Fatal("Failed to server")
+		slog.Error("Failed to serve", "err", err)
+		os.Exit(1)
 	}
 }
