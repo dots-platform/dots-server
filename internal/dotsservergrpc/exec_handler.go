@@ -2,6 +2,7 @@ package dotsservergrpc
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/gob"
 	"os"
 	"path"
@@ -34,13 +35,26 @@ func (s *DotsServerGrpc) Exec(ctx context.Context, app *dotspb.App) (*dotspb.Res
 		"appFuncName", app.GetFuncName(),
 	))
 
-	util.LoggerFromContext(ctx).Debug("Executing appliation")
+	var requestIdBytes []byte
+	requestIdBytes = binary.BigEndian.AppendUint64(requestIdBytes, app.GetRequestId().GetHi())
+	requestIdBytes = binary.BigEndian.AppendUint64(requestIdBytes, app.GetRequestId().GetLo())
+	requestId, err := uuid.FromBytes(requestIdBytes)
+	if err != nil {
+		util.LoggerFromContext(ctx).Error("Failed to parse request UUID from request", "err", err)
+		return nil, grpc.Errorf(codes.Internal, internalErrMsg)
+	}
+	if requestId == uuid.Nil {
+		util.LoggerFromContext(ctx).Warn("Nil request UUID in request")
+		return nil, grpc.Errorf(codes.InvalidArgument, "Request ID invalid")
+	}
 
 	// Look up app config.
 	appConfig, ok := s.config.Apps[app.GetAppName()]
 	if !ok {
 		return nil, grpc.Errorf(codes.NotFound, "App with name not found")
 	}
+
+	util.LoggerFromContext(ctx).Debug("Executing appliation")
 
 	// Open input files.
 	inputFiles := make([]*os.File, len(app.GetInFiles()))
@@ -85,17 +99,16 @@ func (s *DotsServerGrpc) Exec(ctx context.Context, app *dotspb.App) (*dotspb.Res
 	}
 
 	// Register connection channels.
-	// TODO Use an actual ID rather than uuid.Nil to disambiguate registrations.
-	conns, err := s.conns.Register(ctx, serverconn.MsgTypeAppInstance, uuid.Nil)
+	conns, err := s.conns.Register(ctx, serverconn.MsgTypeAppInstance, requestId)
 	if err != nil {
 		util.LoggerFromContext(ctx).Error("Error registering app instance server connection", "err", err)
 		return nil, err
 	}
-	defer s.conns.Unregister(serverconn.MsgTypeAppInstance, uuid.Nil)
+	defer s.conns.Unregister(serverconn.MsgTypeAppInstance, requestId)
 
 	// Barrier to ensure all other nodes have registered their communication
 	// channels.
-	s.controlComm.Barrier(execBarrierTag{uuid.Nil})
+	s.controlComm.Barrier(execBarrierTag{requestId})
 
 	// Start app.
 	instance, err := appinstance.ExecApp(ctx, s.config, appConfig.Path, app.GetAppName(), app.GetFuncName(), inputFiles, outputFiles, conns)
