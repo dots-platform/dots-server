@@ -5,12 +5,12 @@ import (
 	"os"
 	"path"
 
+	"github.com/dtrust-project/dotspb/go/dotspb"
 	"golang.org/x/exp/slog"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 
 	"github.com/dtrust-project/dtrust-server/internal/util"
-	"github.com/dtrust-project/dtrust-server/protos/dotspb"
 )
 
 func (s *DotsServerGrpc) UploadBlob(ctx context.Context, blob *dotspb.Blob) (*dotspb.Result, error) {

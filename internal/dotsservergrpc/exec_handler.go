@@ -6,6 +6,7 @@ import (
 	"os"
 	"path"
 
+	"github.com/dtrust-project/dotspb/go/dotspb"
 	"github.com/google/uuid"
 	"golang.org/x/exp/slog"
 	"google.golang.org/grpc"
@@ -14,7 +15,6 @@ import (
 	"github.com/dtrust-project/dtrust-server/internal/appinstance"
 	"github.com/dtrust-project/dtrust-server/internal/serverconn"
 	"github.com/dtrust-project/dtrust-server/internal/util"
-	"github.com/dtrust-project/dtrust-server/protos/dotspb"
 )
 
 type execBarrierTag struct {
