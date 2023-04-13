@@ -12,9 +12,10 @@ import (
 	"sync"
 
 	"github.com/avast/retry-go"
-	"github.com/dtrust-project/dtrust-server/internal/config"
 	"github.com/google/uuid"
-	log "github.com/sirupsen/logrus"
+	"golang.org/x/exp/slog"
+
+	"github.com/dtrust-project/dtrust-server/internal/config"
 )
 
 type MsgType uint16
@@ -50,11 +51,11 @@ type ServerConn struct {
 }
 
 func (c *ServerConn) handleIncomingMessage(nodeId string, msg *serverMsg) {
-	msgLog := log.WithFields(log.Fields{
-		"otherNodeId":  nodeId,
-		"msgType":      msg.Type,
-		"msgSubtypeId": msg.SubtypeId,
-	})
+	msgLog := slog.With(
+		"otherNodeId", nodeId,
+		"msgType", msg.Type,
+		"msgSubtypeId", msg.SubtypeId,
+	)
 	msgLog.Debug("Received server message")
 
 	c.mutex.RLock()
@@ -98,9 +99,9 @@ func (c *ServerConn) handleIncomingMessage(nodeId string, msg *serverMsg) {
 }
 
 func (c *ServerConn) receiveMessages(nodeId string, decoder *gob.Decoder) {
-	connLog := log.WithFields(log.Fields{
-		"otherNodeId": nodeId,
-	})
+	connLog := slog.With(
+		"otherNodeId", nodeId,
+	)
 
 	// Repeatedly receive messages and forward them to the approprate registered
 	// channel.
@@ -108,7 +109,7 @@ func (c *ServerConn) receiveMessages(nodeId string, decoder *gob.Decoder) {
 	for loop {
 		var serverMsg serverMsg
 		if err := decoder.Decode(&serverMsg); err != nil {
-			connLog.WithError(err).Error("Error reading from server connection")
+			connLog.Error("Error reading from server connection", "err", err)
 			loop = false
 			break
 		}
@@ -222,7 +223,7 @@ func (c *ServerConn) Establish(conf *config.Config) error {
 			conns[s.nodeId] = s.conn
 		case err := <-errChan:
 			loopErr = err
-			log.WithError(err).Error("Error opening server-to-server socket")
+			slog.Error("Error opening server-to-server socket", "err", err)
 		}
 	}
 	if loopErr != nil {
@@ -268,10 +269,10 @@ func (c *ServerConn) Register(ctx context.Context, msgType MsgType, id uuid.UUID
 		subtypeId: id,
 		recvBuf:   make(map[string]map[any]chan any),
 		conn:      c,
-		logger: log.WithFields(log.Fields{
-			"msgType":      msgType,
-			"msgSubtypeId": id,
-		}),
+		logger: slog.With(
+			"msgType", msgType,
+			"msgSubtypeId", id,
+		),
 	}
 	for nodeId := range c.config.Nodes {
 		comm.recvBuf[nodeId] = make(map[any]chan any)
