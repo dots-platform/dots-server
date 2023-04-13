@@ -9,6 +9,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 
+	"github.com/dtrust-project/dtrust-server/internal/util"
 	"github.com/dtrust-project/dtrust-server/protos/dotspb"
 )
 
@@ -16,7 +17,7 @@ func (s *DotsServerGrpc) UploadBlob(ctx context.Context, blob *dotspb.Blob) (*do
 	// Make directory for the blob.
 	blobDir := path.Join(s.config.FileStorageDir, s.config.OurNodeId, blob.GetClientId())
 	if err := os.MkdirAll(blobDir, 0755); err != nil {
-		slog.Error("Error creating blob directory",
+		util.LoggerFromContext(ctx).Error("Error creating blob directory",
 			"err", err,
 			"blobDir", blobDir,
 		)
@@ -26,7 +27,7 @@ func (s *DotsServerGrpc) UploadBlob(ctx context.Context, blob *dotspb.Blob) (*do
 	// Write blob data to file.
 	blobPath := path.Join(blobDir, blob.GetKey())
 	if err := os.WriteFile(blobPath, blob.GetVal(), 0644); err != nil {
-		slog.Error("Error writing blob contents", "err", err,
+		util.LoggerFromContext(ctx).Error("Error writing blob contents", "err", err,
 			"blobPath", blobPath,
 		)
 		return nil, grpc.Errorf(codes.Internal, internalErrMsg)

@@ -13,6 +13,7 @@ import (
 
 	"github.com/dtrust-project/dtrust-server/internal/appinstance"
 	"github.com/dtrust-project/dtrust-server/internal/serverconn"
+	"github.com/dtrust-project/dtrust-server/internal/util"
 	"github.com/dtrust-project/dtrust-server/protos/dotspb"
 )
 
@@ -28,18 +29,18 @@ func (s *DotsServerGrpc) Exec(ctx context.Context, app *dotspb.App) (*dotspb.Res
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	ctx = util.ContextWithLogger(ctx, slog.With(
+		"appName", app.GetAppName(),
+		"appFuncName", app.GetFuncName(),
+	))
+
+	util.LoggerFromContext(ctx).Debug("Executing appliation")
+
 	// Look up app config.
 	appConfig, ok := s.config.Apps[app.GetAppName()]
 	if !ok {
 		return nil, grpc.Errorf(codes.NotFound, "App with name not found")
 	}
-
-	appLog := slog.With(
-		"appName", app.GetAppName(),
-		"appFuncName", app.GetFuncName(),
-	)
-
-	appLog.Debug("Executing appliation")
 
 	// Open input files.
 	inputFiles := make([]*os.File, len(app.GetInFiles()))
@@ -48,7 +49,7 @@ func (s *DotsServerGrpc) Exec(ctx context.Context, app *dotspb.App) (*dotspb.Res
 		inputFile, err := os.Open(inputPath)
 		if err != nil {
 			if !os.IsNotExist(err) {
-				appLog.Error("Error opening input file",
+				util.LoggerFromContext(ctx).Error("Error opening input file",
 					"err", err,
 					"blobPath", inputPath,
 				)
@@ -69,7 +70,7 @@ func (s *DotsServerGrpc) Exec(ctx context.Context, app *dotspb.App) (*dotspb.Res
 		outputFile, err := os.Create(outputPath)
 		if err != nil {
 			if !os.IsNotExist(err) {
-				appLog.Error("Error opening output file",
+				util.LoggerFromContext(ctx).Error("Error opening output file",
 					"err", err,
 					"blobPath", outputPath,
 				)
@@ -87,7 +88,7 @@ func (s *DotsServerGrpc) Exec(ctx context.Context, app *dotspb.App) (*dotspb.Res
 	// TODO Use an actual ID rather than uuid.Nil to disambiguate registrations.
 	conns, err := s.conns.Register(ctx, serverconn.MsgTypeAppInstance, uuid.Nil)
 	if err != nil {
-		appLog.Error("Error registering app instance server connection", "err", err)
+		util.LoggerFromContext(ctx).Error("Error registering app instance server connection", "err", err)
 		return nil, err
 	}
 	defer s.conns.Unregister(serverconn.MsgTypeAppInstance, uuid.Nil)
@@ -99,11 +100,11 @@ func (s *DotsServerGrpc) Exec(ctx context.Context, app *dotspb.App) (*dotspb.Res
 	// Start app.
 	instance, err := appinstance.ExecApp(ctx, s.config, appConfig.Path, app.GetAppName(), app.GetFuncName(), inputFiles, outputFiles, conns)
 	if err != nil {
-		appLog.Error("Error spawning app instance", "err", err)
+		util.LoggerFromContext(ctx).Error("Error spawning app instance", "err", err)
 		return nil, grpc.Errorf(codes.Internal, internalErrMsg)
 	}
 	if err := instance.Wait(); err != nil {
-		appLog.Error("Error spawning app instance", "err", err)
+		util.LoggerFromContext(ctx).Error("Error spawning app instance", "err", err)
 		return nil, grpc.Errorf(codes.Internal, internalErrMsg)
 	}
 
