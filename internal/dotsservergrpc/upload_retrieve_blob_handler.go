@@ -16,7 +16,8 @@ func (s *DotsServerGrpc) UploadBlob(ctx context.Context, blob *dotspb.Blob) (*do
 	// Make directory for the blob.
 	blobDir := path.Join(s.config.FileStorageDir, s.config.OurNodeId, blob.GetClientId())
 	if err := os.MkdirAll(blobDir, 0755); err != nil {
-		slog.Error("Error creating blob directory", "err", err,
+		slog.Error("Error creating blob directory",
+			"err", err,
 			"blobDir", blobDir,
 		)
 		return nil, grpc.Errorf(codes.Internal, internalErrMsg)
@@ -40,7 +41,8 @@ func (s *DotsServerGrpc) RetrieveBlob(ctx context.Context, blob *dotspb.Blob) (*
 	blobData, err := os.ReadFile(blobPath)
 	if err != nil {
 		if !os.IsNotExist(err) {
-			slog.Error("Error reading blob contents", "err", err,
+			slog.Error("Error reading blob contents",
+				"err", err,
 				"blobPath", blobPath,
 			)
 			return nil, grpc.Errorf(codes.Internal, internalErrMsg)

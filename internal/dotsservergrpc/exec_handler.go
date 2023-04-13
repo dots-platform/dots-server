@@ -48,7 +48,8 @@ func (s *DotsServerGrpc) Exec(ctx context.Context, app *dotspb.App) (*dotspb.Res
 		inputFile, err := os.Open(inputPath)
 		if err != nil {
 			if !os.IsNotExist(err) {
-				appLog.Error("Error opening input file", "err", err,
+				appLog.Error("Error opening input file",
+					"err", err,
 					"blobPath", inputPath,
 				)
 				return nil, err
@@ -68,7 +69,8 @@ func (s *DotsServerGrpc) Exec(ctx context.Context, app *dotspb.App) (*dotspb.Res
 		outputFile, err := os.Create(outputPath)
 		if err != nil {
 			if !os.IsNotExist(err) {
-				appLog.Error("Error opening output file", "err", err,
+				appLog.Error("Error opening output file",
+					"err", err,
 					"blobPath", outputPath,
 				)
 				return nil, grpc.Errorf(codes.Internal, internalErrMsg)
