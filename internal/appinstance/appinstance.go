@@ -40,6 +40,11 @@ func (instance *AppInstance) execute(ctx context.Context, appPath string, appNam
 	cmd.ExtraFiles = append(cmd.ExtraFiles, inputFiles...)
 	cmd.ExtraFiles = append(cmd.ExtraFiles, outputFiles...)
 	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		util.LoggerFromContext(ctx).Error("Error opening application stdin pipe", "err", err)
+		instance.done <- err
+		return
+	}
 	if err := cmd.Start(); err != nil {
 		util.LoggerFromContext(ctx).Error("Error starting application", "err", err)
 		instance.done <- grpc.Errorf(codes.Internal, "Application error")
@@ -100,11 +105,6 @@ func (instance *AppInstance) execute(ctx context.Context, appPath string, appNam
 	dotsEnvInput += funcName + "\n"
 
 	// Write environment to stdin.
-	if err != nil {
-		util.LoggerFromContext(ctx).Error("Error opening application stdin pipe", "err", err)
-		instance.done <- err
-		return
-	}
 	if _, err := stdin.Write([]byte(dotsEnvInput)); err != nil {
 		util.LoggerFromContext(ctx).Error("Error writing environment to application stdin", "err", err)
 		instance.done <- err
