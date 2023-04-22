@@ -50,6 +50,12 @@ type ControlMsg struct {
 	Data       [32]byte
 }
 
+func init() {
+	if binary.Size(&ControlMsg{}) != 64 {
+		panic("Control message length must be 64 bytes long")
+	}
+}
+
 type ControlMsgDataRequestSocket struct {
 	OtherRank uint32
 }
