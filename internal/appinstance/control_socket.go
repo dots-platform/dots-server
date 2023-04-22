@@ -16,34 +16,32 @@ import (
 	"github.com/dtrust-project/dtrust-server/internal/util"
 )
 
-const ControlMsgSize = 64
-
-type ControlMsgType uint16
+type controlMsgType uint16
 
 const (
-	ControlMsgTypeRequestSocket ControlMsgType = 1
-	ControlMsgTypeMsgSend                      = 2
-	ControlMsgTypeMsgRecv                      = 3
-	ControlMsgTypeMsgRecvResp                  = 4
+	controlMsgTypeRequestSocket controlMsgType = 1
+	controlMsgTypeMsgSend                      = 2
+	controlMsgTypeMsgRecv                      = 3
+	controlMsgTypeMsgRecvResp                  = 4
 )
 
-func (t ControlMsgType) String() string {
+func (t controlMsgType) String() string {
 	switch t {
-	case ControlMsgTypeRequestSocket:
+	case controlMsgTypeRequestSocket:
 		return "REQUEST_SOCKET"
-	case ControlMsgTypeMsgSend:
+	case controlMsgTypeMsgSend:
 		return "MSG_SEND"
-	case ControlMsgTypeMsgRecv:
+	case controlMsgTypeMsgRecv:
 		return "MSG_RECV"
-	case ControlMsgTypeMsgRecvResp:
+	case controlMsgTypeMsgRecvResp:
 		return "MSG_RECV_RESP"
 	default:
 		return fmt.Sprintf("INVALID: 0x%04x", uint16(t))
 	}
 }
 
-type ControlMsg struct {
-	Type       ControlMsgType
+type controlMsg struct {
+	Type       controlMsgType
 	_          uint16
 	PayloadLen uint32
 	_          [24]byte
@@ -51,21 +49,21 @@ type ControlMsg struct {
 }
 
 func init() {
-	if binary.Size(&ControlMsg{}) != 64 {
+	if binary.Size(&controlMsg{}) != 64 {
 		panic("Control message length must be 64 bytes long")
 	}
 }
 
-type ControlMsgDataRequestSocket struct {
+type controlMsgDataRequestSocket struct {
 	OtherRank uint32
 }
 
-type ControlMsgDataMsgSend struct {
+type controlMsgDataMsgSend struct {
 	Recipient uint32
 	Tag       uint32
 }
 
-type ControlMsgDataMsgRecv struct {
+type controlMsgDataMsgRecv struct {
 	Sender uint32
 	Tag    uint32
 }
@@ -93,13 +91,13 @@ func (instance *AppInstance) sendFile(file *os.File) error {
 	return nil
 }
 
-func (instance *AppInstance) sendControlMsg(ctx context.Context, controlMsg *ControlMsg, payload []byte) error {
+func (instance *AppInstance) sendControlMsg(ctx context.Context, msg *controlMsg, payload []byte) error {
 	instance.controlSocketSendMutex.Lock()
 	defer instance.controlSocketSendMutex.Unlock()
 
 	// Send header.
-	controlMsg.PayloadLen = uint32(len(payload))
-	if err := binary.Write(instance.controlSocket, binary.BigEndian, controlMsg); err != nil {
+	msg.PayloadLen = uint32(len(payload))
+	if err := binary.Write(instance.controlSocket, binary.BigEndian, msg); err != nil {
 		util.LoggerFromContext(ctx).Error("Failed to write control message", "err", err)
 		return err
 	}
@@ -113,13 +111,13 @@ func (instance *AppInstance) sendControlMsg(ctx context.Context, controlMsg *Con
 	return nil
 }
 
-func (instance *AppInstance) recvControlMsg(ctx context.Context) (*ControlMsg, []byte, error) {
+func (instance *AppInstance) recvControlMsg(ctx context.Context) (*controlMsg, []byte, error) {
 	instance.controlSocketRecvMutex.Lock()
 	defer instance.controlSocketRecvMutex.Unlock()
 
 	// Read header.
-	var controlMsg ControlMsg
-	if err := binary.Read(instance.controlSocket, binary.BigEndian, &controlMsg); err != nil {
+	var msg controlMsg
+	if err := binary.Read(instance.controlSocket, binary.BigEndian, &msg); err != nil {
 		if errors.Is(err, io.EOF) {
 			return nil, nil, err
 		}
@@ -129,8 +127,8 @@ func (instance *AppInstance) recvControlMsg(ctx context.Context) (*ControlMsg, [
 
 	// Read payload.
 	var payload []byte
-	if controlMsg.PayloadLen > 0 {
-		payload = make([]byte, controlMsg.PayloadLen)
+	if msg.PayloadLen > 0 {
+		payload = make([]byte, msg.PayloadLen)
 		if _, err := io.ReadFull(instance.controlSocket, payload); err != nil {
 			if errors.Is(err, io.EOF) {
 				return nil, nil, err
@@ -140,12 +138,12 @@ func (instance *AppInstance) recvControlMsg(ctx context.Context) (*ControlMsg, [
 		}
 	}
 
-	return &controlMsg, payload, nil
+	return &msg, payload, nil
 }
 
-func (instance *AppInstance) handleRequestSocketControlMsg(ctx context.Context, controlMsg *ControlMsg) {
-	var data ControlMsgDataRequestSocket
-	dataReader := bytes.NewReader(controlMsg.Data[:])
+func (instance *AppInstance) handleRequestSocketControlMsg(ctx context.Context, msg *controlMsg) {
+	var data controlMsgDataRequestSocket
+	dataReader := bytes.NewReader(msg.Data[:])
 	if err := binary.Read(dataReader, binary.BigEndian, &data); err != nil {
 		util.LoggerFromContext(ctx).Error("Failed to unmarshal binary data", "err", err)
 	}
@@ -203,9 +201,9 @@ func (instance *AppInstance) handleRequestSocketControlMsg(ctx context.Context, 
 	}
 }
 
-func (instance *AppInstance) handleMsgSendControlMsg(ctx context.Context, controlMsg *ControlMsg, payload []byte) {
-	var data ControlMsgDataMsgSend
-	dataReader := bytes.NewReader(controlMsg.Data[:])
+func (instance *AppInstance) handleMsgSendControlMsg(ctx context.Context, msg *controlMsg, payload []byte) {
+	var data controlMsgDataMsgSend
+	dataReader := bytes.NewReader(msg.Data[:])
 	if err := binary.Read(dataReader, binary.BigEndian, &data); err != nil {
 		util.LoggerFromContext(ctx).Error("Failed to unmarshal binary data", "err", err)
 		return
@@ -221,9 +219,9 @@ func (instance *AppInstance) handleMsgSendControlMsg(ctx context.Context, contro
 	instance.serverComm.Send(recipientId, appMsgTag{int(data.Tag)}, payload)
 }
 
-func (instance *AppInstance) handleMsgRecvControlMsg(ctx context.Context, controlMsg *ControlMsg) {
-	var data ControlMsgDataMsgRecv
-	dataReader := bytes.NewReader(controlMsg.Data[:])
+func (instance *AppInstance) handleMsgRecvControlMsg(ctx context.Context, msg *controlMsg) {
+	var data controlMsgDataMsgRecv
+	dataReader := bytes.NewReader(msg.Data[:])
 	if err := binary.Read(dataReader, binary.BigEndian, &data); err != nil {
 		util.LoggerFromContext(ctx).Error("Failed to unmarshal binary data", "err", err)
 		return
@@ -243,8 +241,8 @@ func (instance *AppInstance) handleMsgRecvControlMsg(ctx context.Context, contro
 		}
 		payload := recvPayload.([]byte)
 
-		respMsg := ControlMsg{
-			Type: ControlMsgTypeMsgRecvResp,
+		respMsg := controlMsg{
+			Type: controlMsgTypeMsgRecvResp,
 		}
 		if err := instance.sendControlMsg(ctx, &respMsg, payload); err != nil {
 			util.LoggerFromContext(ctx).Error("Error sending MSG_RECV response data", "err", err)
@@ -253,21 +251,21 @@ func (instance *AppInstance) handleMsgRecvControlMsg(ctx context.Context, contro
 	}()
 }
 
-func (instance *AppInstance) handleControlMsg(ctx context.Context, controlSocket *net.UnixConn, controlMsg *ControlMsg, payload []byte) {
+func (instance *AppInstance) handleControlMsg(ctx context.Context, controlSocket *net.UnixConn, msg *controlMsg, payload []byte) {
 	cmdCtx := util.ContextWithLogger(ctx, util.LoggerFromContext(ctx).With(
-		"cmd", controlMsg.Type,
-		"cmdPayloadLen", controlMsg.PayloadLen,
+		"cmd", msg.Type,
+		"cmdPayloadLen", msg.PayloadLen,
 	))
 	util.LoggerFromContext(cmdCtx).Debug("Received control command")
 
 	// Dispatch command.
-	switch controlMsg.Type {
-	case ControlMsgTypeRequestSocket:
-		instance.handleRequestSocketControlMsg(cmdCtx, controlMsg)
-	case ControlMsgTypeMsgSend:
-		instance.handleMsgSendControlMsg(cmdCtx, controlMsg, payload)
-	case ControlMsgTypeMsgRecv:
-		instance.handleMsgRecvControlMsg(cmdCtx, controlMsg)
+	switch msg.Type {
+	case controlMsgTypeRequestSocket:
+		instance.handleRequestSocketControlMsg(cmdCtx, msg)
+	case controlMsgTypeMsgSend:
+		instance.handleMsgSendControlMsg(cmdCtx, msg, payload)
+	case controlMsgTypeMsgRecv:
+		instance.handleMsgRecvControlMsg(cmdCtx, msg)
 	default:
 		util.LoggerFromContext(cmdCtx).Warn("Application issued invalid control message type")
 	}
