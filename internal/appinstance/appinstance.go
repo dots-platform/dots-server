@@ -1,12 +1,13 @@
 package appinstance
 
 import (
+	"bytes"
 	"context"
+	"encoding/binary"
 	"fmt"
 	"net"
 	"os"
 	"os/exec"
-	"strconv"
 	"sync"
 
 	"golang.org/x/exp/slog"
@@ -29,6 +30,23 @@ type AppInstance struct {
 	controlSocketRecvMutex sync.Mutex
 
 	done chan error
+}
+
+type appEnvHeader struct {
+	WorldRank         uint32
+	WorldSize         uint32
+	InputFilesOffset  uint32
+	InputFilesCount   uint32
+	OutputFilesOffset uint32
+	OutputFilesCount  uint32
+	FuncNameOffset    uint32
+	_                 [100]byte
+}
+
+func init() {
+	if binary.Size(&appEnvHeader{}) != 128 {
+		panic("App environment header must be 128 bytes long")
+	}
 }
 
 func (instance *AppInstance) execute(ctx context.Context, appPath string, appName string, funcName string, inputFiles []*os.File, outputFiles []*os.File) {
@@ -85,28 +103,53 @@ func (instance *AppInstance) execute(ctx context.Context, appPath string, appNam
 	// Generate input for DoTS app environment. Per https://pkg.go.dev/os/exec,
 	// the i'th entry of cmd.ExtraFiles is mapped to FD 3 + i, so the loop
 	// relies only on the lengths inputFiles, outputFiles, and sockets.
-	dotsEnvInput := ""
-	dotsEnvInput += strconv.Itoa(instance.config.OurNodeRank) + "\n"
-	dotsEnvInput += strconv.Itoa(len(instance.config.Nodes)) + "\n"
-	for i := range inputFiles {
-		if i > 0 {
-			dotsEnvInput += " "
-		}
-		dotsEnvInput += strconv.Itoa(3 + i)
-	}
-	dotsEnvInput += "\n"
-	for i := range inputFiles {
-		if i > 0 {
-			dotsEnvInput += " "
-		}
-		dotsEnvInput += strconv.Itoa(3 + len(inputFiles) + i)
-	}
-	dotsEnvInput += "\n"
-	dotsEnvInput += funcName + "\n"
+	// Fixed header inputs.
+	var envHeader appEnvHeader
+	envOffset := uint32(0)
+	envHeader.WorldRank = uint32(instance.config.OurNodeRank)
+	envHeader.WorldSize = uint32(len(instance.config.Nodes))
+	envOffset += uint32(binary.Size(&envHeader))
+	envInput := make([]byte, envOffset)
 
-	// Write environment to stdin.
-	if _, err := stdin.Write([]byte(dotsEnvInput)); err != nil {
-		util.LoggerFromContext(ctx).Error("Error writing environment to application stdin", "err", err)
+	// Input files.
+	envHeader.InputFilesOffset = envOffset
+	envHeader.InputFilesCount = uint32(len(inputFiles))
+	for i := range inputFiles {
+		envInput = binary.BigEndian.AppendUint32(envInput, uint32(3+i))
+	}
+	envOffset += uint32(len(inputFiles) * binary.Size(uint32(0)))
+
+	// Ouput files.
+	envHeader.OutputFilesOffset = envOffset
+	envHeader.OutputFilesCount = uint32(len(outputFiles))
+	for i := range outputFiles {
+		envInput = binary.BigEndian.AppendUint32(envInput, uint32(3+len(inputFiles)+i))
+	}
+	envOffset += uint32(len(outputFiles) * binary.Size(uint32(0)))
+
+	// Function name.
+	envHeader.FuncNameOffset = envOffset
+	envInput = append(envInput, []byte(funcName)...)
+	envInput = append(envInput, 0)
+	envOffset += uint32(len(funcName) + 1)
+
+	// Marshal the header and place it at the beginning of the input slice.
+	envInputBuf := new(bytes.Buffer)
+	if err := binary.Write(envInputBuf, binary.BigEndian, &envHeader); err != nil {
+		util.LoggerFromContext(ctx).Error("Failed to marshal app environment header", "err", err)
+		instance.done <- err
+		return
+	}
+	copy(envInput, envInputBuf.Bytes())
+
+	// Write environment length and environment to stdin.
+	if err := binary.Write(stdin, binary.BigEndian, envOffset); err != nil {
+		util.LoggerFromContext(ctx).Error("Failed to write environment length to application stdin", "err", err)
+		instance.done <- err
+		return
+	}
+	if _, err := stdin.Write(envInput); err != nil {
+		util.LoggerFromContext(ctx).Error("Failed to write environment to application stdin", "err", err)
 		instance.done <- err
 		return
 	}
