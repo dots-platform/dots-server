@@ -77,14 +77,8 @@ func init() {
 }
 
 func (instance *AppInstance) sendFile(file *os.File) error {
-	controlFile, err := instance.controlSocket.File()
-	if err != nil {
-		return err
-	}
-	defer controlFile.Close()
-
 	unixRights := syscall.UnixRights(int(file.Fd()))
-	if err := syscall.Sendmsg(int(controlFile.Fd()), nil, unixRights, nil, 0); err != nil {
+	if err := syscall.Sendmsg(int(instance.controlSocket.Fd()), nil, unixRights, nil, 0); err != nil {
 		return err
 	}
 
@@ -251,7 +245,7 @@ func (instance *AppInstance) handleMsgRecvControlMsg(ctx context.Context, msg *c
 	}()
 }
 
-func (instance *AppInstance) handleControlMsg(ctx context.Context, controlSocket *net.UnixConn, msg *controlMsg, payload []byte) {
+func (instance *AppInstance) handleControlMsg(ctx context.Context, controlSocket *os.File, msg *controlMsg, payload []byte) {
 	cmdCtx := util.ContextWithLogger(ctx, util.LoggerFromContext(ctx).With(
 		"cmd", msg.Type,
 		"cmdPayloadLen", msg.PayloadLen,
@@ -271,7 +265,7 @@ func (instance *AppInstance) handleControlMsg(ctx context.Context, controlSocket
 	}
 }
 
-func (instance *AppInstance) manageControlSocket(ctx context.Context, controlSocket *net.UnixConn) {
+func (instance *AppInstance) manageControlSocket(ctx context.Context, controlSocket *os.File) {
 	instance.controlSocket = controlSocket
 
 	for {
