@@ -25,7 +25,7 @@ type AppInstance struct {
 	config                 *config.Config
 	serverComm             *serverconn.ServerComm
 	bufferedMsgs           map[int]map[int][]byte
-	controlSocket          *net.UnixConn
+	controlSocket          *os.File
 	controlSocketSendMutex sync.Mutex
 	controlSocketRecvMutex sync.Mutex
 
@@ -97,7 +97,13 @@ func (instance *AppInstance) execute(ctx context.Context, appPath string, appNam
 			}
 		}
 		defer controlSocket.Close()
-		instance.manageControlSocket(ctx, controlSocket.(*net.UnixConn))
+		controlSocketFile, err := controlSocket.(*net.UnixConn).File()
+		if err != nil {
+			util.LoggerFromContext(ctx).Error("Failed to create file for control socket", "err", err)
+			return
+		}
+		defer controlSocketFile.Close()
+		instance.manageControlSocket(ctx, controlSocketFile)
 	}()
 
 	// Generate input for DoTS app environment. Per https://pkg.go.dev/os/exec,
