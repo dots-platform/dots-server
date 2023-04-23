@@ -4,11 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
-	"fmt"
-	"net"
 	"os"
 	"os/exec"
 	"sync"
+	"syscall"
 
 	"golang.org/x/exp/slog"
 	"google.golang.org/grpc"
@@ -40,7 +39,8 @@ type appEnvHeader struct {
 	OutputFilesOffset uint32
 	OutputFilesCount  uint32
 	FuncNameOffset    uint32
-	_                 [100]byte
+	ControlSocket     uint32
+	_                 [96]byte
 }
 
 func init() {
@@ -53,8 +53,25 @@ func (instance *AppInstance) execute(ctx context.Context, appPath string, appNam
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	// Open and manage control socket.
+	controlSocketPair, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
+	if err != nil {
+		util.LoggerFromContext(ctx).Error("Failed to open control socketpair", "err", err)
+		instance.done <- err
+		return
+	}
+	controlSocket := os.NewFile(uintptr(controlSocketPair[0]), "")
+	controlSocketApp := os.NewFile(uintptr(controlSocketPair[1]), "")
+	defer controlSocketApp.Close()
+	defer cancel() // Defer the context cancel only after controlSocket.Close() to prevent error.
+	go func() {
+		defer controlSocket.Close()
+		instance.manageControlSocket(ctx, controlSocket)
+	}()
+
 	// Run program.
 	cmd := exec.CommandContext(ctx, appPath)
+	cmd.ExtraFiles = append(cmd.ExtraFiles, controlSocketApp)
 	cmd.ExtraFiles = append(cmd.ExtraFiles, inputFiles...)
 	cmd.ExtraFiles = append(cmd.ExtraFiles, outputFiles...)
 	stdin, err := cmd.StdinPipe()
@@ -70,42 +87,6 @@ func (instance *AppInstance) execute(ctx context.Context, appPath string, appNam
 	}
 	defer cmd.Process.Kill()
 
-	// Open control socket.
-	var listenConfig net.ListenConfig
-	controlSocketPath := fmt.Sprintf("/tmp/socket-%d", cmd.Process.Pid)
-	os.Remove(controlSocketPath)
-	controlConn, err := listenConfig.Listen(ctx, "unix", controlSocketPath)
-	if err != nil {
-		util.LoggerFromContext(ctx).Error("Error creating control socket listener", "err", err)
-		instance.done <- grpc.Errorf(codes.Internal, "Application error")
-		return
-	}
-	defer os.Remove(controlSocketPath)
-	defer controlConn.Close()
-	defer cancel() // Defer the context cancel only after controlConn.Close() to prevent error.
-
-	// Accept connection on control socket.
-	go func() {
-		controlSocket, err := controlConn.Accept()
-		if err != nil {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-				util.LoggerFromContext(ctx).Error("Error accepting control socket connection", "err", err)
-				return
-			}
-		}
-		defer controlSocket.Close()
-		controlSocketFile, err := controlSocket.(*net.UnixConn).File()
-		if err != nil {
-			util.LoggerFromContext(ctx).Error("Failed to create file for control socket", "err", err)
-			return
-		}
-		defer controlSocketFile.Close()
-		instance.manageControlSocket(ctx, controlSocketFile)
-	}()
-
 	// Generate input for DoTS app environment. Per https://pkg.go.dev/os/exec,
 	// the i'th entry of cmd.ExtraFiles is mapped to FD 3 + i, so the loop
 	// relies only on the lengths inputFiles, outputFiles, and sockets.
@@ -114,6 +95,7 @@ func (instance *AppInstance) execute(ctx context.Context, appPath string, appNam
 	envOffset := uint32(0)
 	envHeader.WorldRank = uint32(instance.config.OurNodeRank)
 	envHeader.WorldSize = uint32(len(instance.config.Nodes))
+	envHeader.ControlSocket = uint32(3)
 	envOffset += uint32(binary.Size(&envHeader))
 	envInput := make([]byte, envOffset)
 
@@ -121,7 +103,7 @@ func (instance *AppInstance) execute(ctx context.Context, appPath string, appNam
 	envHeader.InputFilesOffset = envOffset
 	envHeader.InputFilesCount = uint32(len(inputFiles))
 	for i := range inputFiles {
-		envInput = binary.BigEndian.AppendUint32(envInput, uint32(3+i))
+		envInput = binary.BigEndian.AppendUint32(envInput, uint32(3+1+i))
 	}
 	envOffset += uint32(len(inputFiles) * binary.Size(uint32(0)))
 
@@ -129,7 +111,7 @@ func (instance *AppInstance) execute(ctx context.Context, appPath string, appNam
 	envHeader.OutputFilesOffset = envOffset
 	envHeader.OutputFilesCount = uint32(len(outputFiles))
 	for i := range outputFiles {
-		envInput = binary.BigEndian.AppendUint32(envInput, uint32(3+len(inputFiles)+i))
+		envInput = binary.BigEndian.AppendUint32(envInput, uint32(3+1+len(inputFiles)+i))
 	}
 	envOffset += uint32(len(outputFiles) * binary.Size(uint32(0)))
 
