@@ -40,7 +40,14 @@ type appEnvHeader struct {
 	OutputFilesCount  uint32
 	FuncNameOffset    uint32
 	ControlSocket     uint32
-	_                 [96]byte
+	ArgsOffset        uint32
+	ArgsCount         uint32
+	_                 [88]byte
+}
+
+type appEnvIovec struct {
+	Offset uint32
+	Length uint32
 }
 
 func init() {
@@ -49,7 +56,7 @@ func init() {
 	}
 }
 
-func (instance *AppInstance) execute(ctx context.Context, appPath string, appName string, funcName string, inputFiles []*os.File, outputFiles []*os.File) {
+func (instance *AppInstance) execute(ctx context.Context, appPath string, appName string, funcName string, inputFiles []*os.File, outputFiles []*os.File, args [][]byte) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -121,6 +128,30 @@ func (instance *AppInstance) execute(ctx context.Context, appPath string, appNam
 	envInput = append(envInput, 0)
 	envOffset += uint32(len(funcName) + 1)
 
+	// Exec arguments.
+	envHeader.ArgsOffset = envOffset
+	envHeader.ArgsCount = uint32(len(args))
+	envArgOffset := uint32(len(args) * binary.Size(&appEnvIovec{}))
+	envArgInputBuf := new(bytes.Buffer)
+	for _, arg := range args {
+		envArgIovec := appEnvIovec{
+			Offset: envOffset + envArgOffset,
+			Length: uint32(len(arg)),
+		}
+		if err := binary.Write(envArgInputBuf, binary.BigEndian, &envArgIovec); err != nil {
+			util.LoggerFromContext(ctx).Error("Failed to marshal app environment arg iovec", "err", err)
+			instance.done <- err
+			return
+		}
+		envArgOffset += uint32(len(arg) + 1)
+	}
+	envInput = append(envInput, envArgInputBuf.Bytes()...)
+	for _, arg := range args {
+		envInput = append(envInput, arg...)
+		envInput = append(envInput, 0)
+	}
+	envOffset += envArgOffset
+
 	// Marshal the header and place it at the beginning of the input slice.
 	envInputBuf := new(bytes.Buffer)
 	if err := binary.Write(envInputBuf, binary.BigEndian, &envHeader); err != nil {
@@ -156,7 +187,7 @@ func (instance *AppInstance) Wait() error {
 	return <-instance.done
 }
 
-func ExecApp(ctx context.Context, conf *config.Config, appPath string, appName string, funcName string, inputFiles []*os.File, outputFiles []*os.File, serverComm *serverconn.ServerComm) (*AppInstance, error) {
+func ExecApp(ctx context.Context, conf *config.Config, appPath string, appName string, funcName string, inputFiles []*os.File, outputFiles []*os.File, args [][]byte, serverComm *serverconn.ServerComm) (*AppInstance, error) {
 	ctx = util.ContextWithLogger(ctx, slog.With(
 		"appName", appName,
 		"appFuncName", funcName,
@@ -169,6 +200,6 @@ func ExecApp(ctx context.Context, conf *config.Config, appPath string, appName s
 		serverComm: serverComm,
 		done:       make(chan error),
 	}
-	go instance.execute(ctx, appPath, appName, funcName, inputFiles, outputFiles)
+	go instance.execute(ctx, appPath, appName, funcName, inputFiles, outputFiles, args)
 	return instance, nil
 }
