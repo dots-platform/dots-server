@@ -83,6 +83,14 @@ func (s *DotsServerGrpc) Exec(ctx context.Context, app *dotspb.App) (*dotspb.Res
 	// Open output files.
 	outputFiles := make([]*os.File, len(app.GetOutFiles()))
 	for i, outputName := range app.GetOutFiles() {
+		outputDir := path.Join(s.config.FileStorageDir, s.config.OurNodeId, app.GetClientId())
+		if err := os.MkdirAll(outputDir, 0755); err != nil {
+			util.LoggerFromContext(ctx).Error("Failed to create output directory",
+				"err", err,
+				"blobDir", outputDir,
+			)
+			return nil, grpc.Errorf(codes.Internal, internalErrMsg)
+		}
 		outputPath := path.Join(s.config.FileStorageDir, s.config.OurNodeId, app.GetClientId(), outputName)
 		outputFile, err := os.Create(outputPath)
 		if err != nil {
