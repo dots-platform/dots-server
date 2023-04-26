@@ -50,7 +50,7 @@ func (s *DotsServerGrpc) RetrieveBlob(ctx context.Context, blob *dotspb.Blob) (*
 		}
 
 		// Handle not found error.
-		return nil, grpc.Errorf(codes.NotFound, "Blob with key not found")
+		return nil, grpc.Errorf(codes.NotFound, "Blob with key not found: %s", blob.GetKey())
 	}
 
 	blob.Val = blobData

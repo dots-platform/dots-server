@@ -74,7 +74,7 @@ func (s *DotsServerGrpc) Exec(ctx context.Context, app *dotspb.App) (*dotspb.Res
 			}
 
 			// Handle not found error.
-			return nil, grpc.Errorf(codes.NotFound, "Blob with key not found")
+			return nil, grpc.Errorf(codes.NotFound, "Blob with key not found: %s", inputName)
 		}
 		defer inputFile.Close()
 		inputFiles[i] = inputFile
@@ -94,16 +94,11 @@ func (s *DotsServerGrpc) Exec(ctx context.Context, app *dotspb.App) (*dotspb.Res
 		outputPath := path.Join(s.config.FileStorageDir, s.config.OurNodeId, app.GetClientId(), outputName)
 		outputFile, err := os.Create(outputPath)
 		if err != nil {
-			if !os.IsNotExist(err) {
-				util.LoggerFromContext(ctx).Error("Error opening output file",
-					"err", err,
-					"blobPath", outputPath,
-				)
-				return nil, grpc.Errorf(codes.Internal, internalErrMsg)
-			}
-
-			// Handle not found error.
-			return nil, grpc.Errorf(codes.NotFound, "Blob with key not found")
+			util.LoggerFromContext(ctx).Error("Error opening output file",
+				"err", err,
+				"blobPath", outputPath,
+			)
+			return nil, grpc.Errorf(codes.Internal, internalErrMsg)
 		}
 		defer outputFile.Close()
 		outputFiles[i] = outputFile
