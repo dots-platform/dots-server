@@ -6,7 +6,6 @@ import (
 	"path"
 
 	"github.com/dtrust-project/dotspb/go/dotspb"
-	"golang.org/x/exp/slog"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 
@@ -42,7 +41,7 @@ func (s *DotsServerGrpc) RetrieveBlob(ctx context.Context, blob *dotspb.Blob) (*
 	blobData, err := os.ReadFile(blobPath)
 	if err != nil {
 		if !os.IsNotExist(err) {
-			slog.Error("Error reading blob contents",
+			util.LoggerFromContext(ctx).Error("Error reading blob contents",
 				"err", err,
 				"blobPath", blobPath,
 			)
