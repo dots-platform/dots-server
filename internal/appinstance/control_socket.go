@@ -23,6 +23,7 @@ const (
 	controlMsgTypeMsgSend                      = 2
 	controlMsgTypeMsgRecv                      = 3
 	controlMsgTypeMsgRecvResp                  = 4
+	controlMsgTypeOutput                       = 5
 )
 
 func (t controlMsgType) String() string {
@@ -35,6 +36,8 @@ func (t controlMsgType) String() string {
 		return "MSG_RECV"
 	case controlMsgTypeMsgRecvResp:
 		return "MSG_RECV_RESP"
+	case controlMsgTypeOutput:
+		return "OUTPUT"
 	default:
 		return fmt.Sprintf("INVALID: 0x%04x", uint16(t))
 	}
@@ -67,6 +70,8 @@ type controlMsgDataMsgRecv struct {
 	Sender uint32
 	Tag    uint32
 }
+
+type controlMsgDataOutput struct{}
 
 type appMsgTag struct {
 	Tag int
@@ -245,6 +250,10 @@ func (instance *AppInstance) handleMsgRecvControlMsg(ctx context.Context, msg *c
 	}()
 }
 
+func (instance *AppInstance) handleOutputControlMsg(ctx context.Context, payload []byte) {
+	instance.outputBuf.Write(payload)
+}
+
 func (instance *AppInstance) handleControlMsg(ctx context.Context, controlSocket *os.File, msg *controlMsg, payload []byte) {
 	cmdCtx := util.ContextWithLogger(ctx, util.LoggerFromContext(ctx).With(
 		"cmd", msg.Type,
@@ -260,6 +269,8 @@ func (instance *AppInstance) handleControlMsg(ctx context.Context, controlSocket
 		instance.handleMsgSendControlMsg(cmdCtx, msg, payload)
 	case controlMsgTypeMsgRecv:
 		instance.handleMsgRecvControlMsg(cmdCtx, msg)
+	case controlMsgTypeOutput:
+		instance.handleOutputControlMsg(cmdCtx, payload)
 	default:
 		util.LoggerFromContext(cmdCtx).Warn("Application issued invalid control message type")
 	}
