@@ -10,25 +10,30 @@ import (
 	"syscall"
 
 	"golang.org/x/exp/slog"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
 
 	"github.com/dtrust-project/dtrust-server/internal/config"
 	"github.com/dtrust-project/dtrust-server/internal/serverconn"
 	"github.com/dtrust-project/dtrust-server/internal/util"
 )
 
+type appResult struct {
+	output []byte
+	err    error
+}
+
 type AppInstance struct {
 	appName                string
 	funcName               string
 	config                 *config.Config
 	serverComm             *serverconn.ServerComm
-	bufferedMsgs           map[int]map[int][]byte
 	controlSocket          *os.File
 	controlSocketSendMutex sync.Mutex
 	controlSocketRecvMutex sync.Mutex
 
-	done chan error
+	cmd       *exec.Cmd
+	outputBuf bytes.Buffer
+
+	done chan appResult
 }
 
 type appEnvHeader struct {
@@ -57,7 +62,7 @@ func (instance *AppInstance) execute(ctx context.Context, appPath string, appNam
 	controlSocketPair, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
 	if err != nil {
 		util.LoggerFromContext(ctx).Error("Failed to open control socketpair", "err", err)
-		instance.done <- err
+		instance.done <- appResult{err: err}
 		return
 	}
 	controlSocket := os.NewFile(uintptr(controlSocketPair[0]), "")
@@ -70,25 +75,25 @@ func (instance *AppInstance) execute(ctx context.Context, appPath string, appNam
 	}()
 
 	// Run program.
-	cmd := exec.CommandContext(ctx, appPath)
-	cmd.ExtraFiles = append(cmd.ExtraFiles, controlSocketApp)
-	cmd.ExtraFiles = append(cmd.ExtraFiles, inputFiles...)
-	cmd.ExtraFiles = append(cmd.ExtraFiles, outputFiles...)
-	stdin, err := cmd.StdinPipe()
+	instance.cmd = exec.CommandContext(ctx, appPath)
+	instance.cmd.ExtraFiles = append(instance.cmd.ExtraFiles, controlSocketApp)
+	instance.cmd.ExtraFiles = append(instance.cmd.ExtraFiles, inputFiles...)
+	instance.cmd.ExtraFiles = append(instance.cmd.ExtraFiles, outputFiles...)
+	stdin, err := instance.cmd.StdinPipe()
 	if err != nil {
 		util.LoggerFromContext(ctx).Error("Error opening application stdin pipe", "err", err)
-		instance.done <- err
+		instance.done <- appResult{err: err}
 		return
 	}
-	if err := cmd.Start(); err != nil {
+	if err := instance.cmd.Start(); err != nil {
 		util.LoggerFromContext(ctx).Error("Error starting application", "err", err)
-		instance.done <- grpc.Errorf(codes.Internal, "Application error")
+		instance.done <- appResult{err: err}
 		return
 	}
-	defer cmd.Process.Kill()
+	defer instance.cmd.Process.Kill()
 
 	// Generate input for DoTS app environment. Per https://pkg.go.dev/os/exec,
-	// the i'th entry of cmd.ExtraFiles is mapped to FD 3 + i, so the loop
+	// the i'th entry of instance.cmd.ExtraFiles is mapped to FD 3 + i, so the loop
 	// relies only on the lengths inputFiles, outputFiles, and sockets.
 	// Fixed header inputs.
 	var envHeader appEnvHeader
@@ -125,7 +130,7 @@ func (instance *AppInstance) execute(ctx context.Context, appPath string, appNam
 	envInputBuf := new(bytes.Buffer)
 	if err := binary.Write(envInputBuf, binary.BigEndian, &envHeader); err != nil {
 		util.LoggerFromContext(ctx).Error("Failed to marshal app environment header", "err", err)
-		instance.done <- err
+		instance.done <- appResult{err: err}
 		return
 	}
 	copy(envInput, envInputBuf.Bytes())
@@ -133,27 +138,37 @@ func (instance *AppInstance) execute(ctx context.Context, appPath string, appNam
 	// Write environment length and environment to stdin.
 	if err := binary.Write(stdin, binary.BigEndian, envOffset); err != nil {
 		util.LoggerFromContext(ctx).Error("Failed to write environment length to application stdin", "err", err)
-		instance.done <- err
+		instance.done <- appResult{err: err}
 		return
 	}
 	if _, err := stdin.Write(envInput); err != nil {
 		util.LoggerFromContext(ctx).Error("Failed to write environment to application stdin", "err", err)
-		instance.done <- err
+		instance.done <- appResult{err: err}
 		return
 	}
 
 	// Wait for application to finish.
-	if err := cmd.Wait(); err != nil {
+	if err := instance.cmd.Wait(); err != nil {
 		util.LoggerFromContext(ctx).Warn("Application exited with non-zero return code", "err", err)
-		instance.done <- err
+		instance.done <- appResult{err: err}
 		return
 	}
 
-	instance.done <- nil
+	instance.done <- appResult{output: instance.outputBuf.Bytes()}
 }
 
-func (instance *AppInstance) Wait() error {
-	return <-instance.done
+func (instance *AppInstance) Wait(ctx context.Context) ([]byte, error) {
+	defer instance.cmd.Process.Kill()
+
+	select {
+	case result := <-instance.done:
+		if result.err != nil {
+			return nil, result.err
+		}
+		return result.output, nil
+	case <-ctx.Done():
+		return nil, context.Canceled
+	}
 }
 
 func ExecApp(ctx context.Context, conf *config.Config, appPath string, appName string, funcName string, inputFiles []*os.File, outputFiles []*os.File, serverComm *serverconn.ServerComm) (*AppInstance, error) {
@@ -167,7 +182,7 @@ func ExecApp(ctx context.Context, conf *config.Config, appPath string, appName s
 		funcName:   funcName,
 		config:     conf,
 		serverComm: serverComm,
-		done:       make(chan error),
+		done:       make(chan appResult),
 	}
 	go instance.execute(ctx, appPath, appName, funcName, inputFiles, outputFiles)
 	return instance, nil
