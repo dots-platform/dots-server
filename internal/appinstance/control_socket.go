@@ -255,24 +255,24 @@ func (instance *AppInstance) handleOutputControlMsg(ctx context.Context, payload
 }
 
 func (instance *AppInstance) handleControlMsg(ctx context.Context, controlSocket *os.File, msg *controlMsg, payload []byte) {
-	cmdCtx := util.ContextWithLogger(ctx, util.LoggerFromContext(ctx).With(
+	ctx = util.ContextWithLogger(ctx, util.LoggerFromContext(ctx).With(
 		"cmd", msg.Type,
 		"cmdPayloadLen", msg.PayloadLen,
 	))
-	util.LoggerFromContext(cmdCtx).Debug("Received control command")
+	util.LoggerFromContext(ctx).Debug("Received control command")
 
 	// Dispatch command.
 	switch msg.Type {
 	case controlMsgTypeRequestSocket:
-		instance.handleRequestSocketControlMsg(cmdCtx, msg)
+		instance.handleRequestSocketControlMsg(ctx, msg)
 	case controlMsgTypeMsgSend:
-		instance.handleMsgSendControlMsg(cmdCtx, msg, payload)
+		instance.handleMsgSendControlMsg(ctx, msg, payload)
 	case controlMsgTypeMsgRecv:
-		instance.handleMsgRecvControlMsg(cmdCtx, msg)
+		instance.handleMsgRecvControlMsg(ctx, msg)
 	case controlMsgTypeOutput:
-		instance.handleOutputControlMsg(cmdCtx, payload)
+		instance.handleOutputControlMsg(ctx, payload)
 	default:
-		util.LoggerFromContext(cmdCtx).Warn("Application issued invalid control message type")
+		util.LoggerFromContext(ctx).Warn("Application issued invalid control message type")
 	}
 }
 
