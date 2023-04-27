@@ -3,8 +3,6 @@ github.com/avast/retry-go v3.0.0+incompatible/go.mod h1:XtSnn+n/sHqQIpZ10K1qAevB
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
-github.com/dtrust-project/dotspb/go/dotspb v0.1.0 h1:k187fvowtMLts3aatwocA6j3HUX+d/k5/Fu3JT1x4rs=
-github.com/dtrust-project/dotspb/go/dotspb v0.1.0/go.mod h1:9+9vNTkfyvWYCi9QD2mFqbpxSLZenFH8+O6+Lf/sTXA=
 github.com/dtrust-project/dotspb/go/dotspb v0.2.0 h1:p9axyIBoWbTdFSTO7inM7SsfrYesK+D7j9qyZGigR20=
 github.com/dtrust-project/dotspb/go/dotspb v0.2.0/go.mod h1:9+9vNTkfyvWYCi9QD2mFqbpxSLZenFH8+O6+Lf/sTXA=
 github.com/golang/protobuf v1.5.0/go.mod h1:FsONVRAS9T7sI+LIUmWTfcYkHO4aIWwzhcaSAoJOfIk=
