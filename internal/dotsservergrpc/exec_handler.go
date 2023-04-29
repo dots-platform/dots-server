@@ -125,6 +125,13 @@ func (s *DotsServerGrpc) Exec(ctx context.Context, app *dotspb.App) (*dotspb.Res
 		return nil, grpc.Errorf(codes.Internal, internalErrMsg)
 	}
 
+	util.LoggerFromContext(ctx).Info("Application finished",
+		"output", output,
+	)
+	util.LoggerFromContext(ctx).Debug("Application finished with output",
+		"output", output,
+	)
+
 	return &dotspb.Result{
 		Result: "success",
 		Output: output,
