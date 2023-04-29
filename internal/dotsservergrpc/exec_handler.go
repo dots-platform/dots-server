@@ -122,7 +122,7 @@ func (s *DotsServerGrpc) Exec(ctx context.Context, app *dotspb.App) (*dotspb.Res
 		util.LoggerFromContext(ctx).Error("Error spawning app instance", "err", err)
 		return nil, grpc.Errorf(codes.Internal, internalErrMsg)
 	}
-	output, err := instance.Wait(ctx)
+	output, err := instance.Wait()
 	if err != nil {
 		util.LoggerFromContext(ctx).Error("Error spawning app instance", "err", err)
 		return nil, grpc.Errorf(codes.Internal, internalErrMsg)

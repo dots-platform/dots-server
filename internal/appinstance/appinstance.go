@@ -157,18 +157,12 @@ func (instance *AppInstance) execute(ctx context.Context, appPath string, appNam
 	instance.done <- appResult{output: instance.outputBuf.Bytes()}
 }
 
-func (instance *AppInstance) Wait(ctx context.Context) ([]byte, error) {
-	defer instance.cmd.Process.Kill()
-
-	select {
-	case result := <-instance.done:
-		if result.err != nil {
-			return nil, result.err
-		}
-		return result.output, nil
-	case <-ctx.Done():
-		return nil, context.Canceled
+func (instance *AppInstance) Wait() ([]byte, error) {
+	result := <-instance.done
+	if result.err != nil {
+		return nil, result.err
 	}
+	return result.output, nil
 }
 
 func ExecApp(ctx context.Context, conf *config.Config, appPath string, appName string, funcName string, inputFiles []*os.File, outputFiles []*os.File, serverComm *serverconn.ServerComm) (*AppInstance, error) {
