@@ -8,27 +8,23 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"os"
 	"syscall"
 
-	"github.com/avast/retry-go"
 	"github.com/dtrust-project/dtrust-server/internal/util"
 )
 
 type controlMsgType uint16
 
 const (
-	controlMsgTypeRequestSocket controlMsgType = 1
-	controlMsgTypeMsgSend                      = 2
-	controlMsgTypeMsgRecv                      = 3
-	controlMsgTypeMsgRecvResp                  = 4
+	// controlMsgTypeRequestSocket = 1 // Deprecated.
+	controlMsgTypeMsgSend     controlMsgType = 2
+	controlMsgTypeMsgRecv                    = 3
+	controlMsgTypeMsgRecvResp                = 4
 )
 
 func (t controlMsgType) String() string {
 	switch t {
-	case controlMsgTypeRequestSocket:
-		return "REQUEST_SOCKET"
 	case controlMsgTypeMsgSend:
 		return "MSG_SEND"
 	case controlMsgTypeMsgRecv:
@@ -135,66 +131,6 @@ func (instance *AppInstance) recvControlMsg(ctx context.Context) (*controlMsg, [
 	return &msg, payload, nil
 }
 
-func (instance *AppInstance) handleRequestSocketControlMsg(ctx context.Context, msg *controlMsg) {
-	var data controlMsgDataRequestSocket
-	dataReader := bytes.NewReader(msg.Data[:])
-	if err := binary.Read(dataReader, binary.BigEndian, &data); err != nil {
-		util.LoggerFromContext(ctx).Error("Failed to unmarshal binary data", "err", err)
-	}
-
-	ourRank := instance.config.NodeRanks[instance.config.OurNodeId]
-	otherRank := int(data.OtherRank)
-
-	// Construct TCP socket.
-	var conn net.Conn
-	ourConfig := instance.config.Nodes[instance.config.OurNodeId]
-	otherConfig := instance.config.Nodes[instance.config.NodeIds[otherRank]]
-	if ourRank < otherRank {
-		// Act as the listener for higher ranks.
-		var listenConfig net.ListenConfig
-		listener, err := listenConfig.Listen(ctx, "tcp", fmt.Sprintf(":%d", ourConfig.Ports[otherRank]))
-		if err != nil {
-			util.LoggerFromContext(ctx).Error("Failed to listen", "err", err)
-			return
-		}
-		defer listener.Close()
-		conn, err = listener.Accept()
-		if err != nil {
-			util.LoggerFromContext(ctx).Error("Failed to listen", "err", err)
-			return
-		}
-	} else {
-		// Act as dialer for lower ranks.
-		var dialer net.Dialer
-		if err := retry.Do(
-			func() error {
-				c, err := dialer.DialContext(ctx, "tcp", fmt.Sprintf(":%d", otherConfig.Ports[ourRank]))
-				if err != nil {
-					return err
-				}
-				conn = c
-				return nil
-			},
-			retry.Context(ctx),
-		); err != nil {
-			util.LoggerFromContext(ctx).Error("Failed to dial", "err", err)
-		}
-	}
-	defer conn.Close()
-
-	// Pass socket through control socket.
-	file, err := conn.(*net.TCPConn).File()
-	if err != nil {
-		util.LoggerFromContext(ctx).Error("Failed to get TCP file", "err", err)
-		return
-	}
-	defer file.Close()
-	if err := instance.sendFile(file); err != nil {
-		util.LoggerFromContext(ctx).Error("Failed to get send TCP through control socket", "err", err)
-		return
-	}
-}
-
 func (instance *AppInstance) handleMsgSendControlMsg(ctx context.Context, msg *controlMsg, payload []byte) {
 	var data controlMsgDataMsgSend
 	dataReader := bytes.NewReader(msg.Data[:])
@@ -254,8 +190,6 @@ func (instance *AppInstance) handleControlMsg(ctx context.Context, controlSocket
 
 	// Dispatch command.
 	switch msg.Type {
-	case controlMsgTypeRequestSocket:
-		instance.handleRequestSocketControlMsg(cmdCtx, msg)
 	case controlMsgTypeMsgSend:
 		instance.handleMsgSendControlMsg(cmdCtx, msg, payload)
 	case controlMsgTypeMsgRecv:
