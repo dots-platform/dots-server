@@ -55,9 +55,6 @@ func init() {
 }
 
 func (instance *AppInstance) execute(ctx context.Context, appPath string, appName string, funcName string, inputFiles []*os.File, outputFiles []*os.File) {
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
 	// Open and manage control socket.
 	controlSocketPair, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
 	if err != nil {
@@ -68,7 +65,6 @@ func (instance *AppInstance) execute(ctx context.Context, appPath string, appNam
 	controlSocket := os.NewFile(uintptr(controlSocketPair[0]), "")
 	controlSocketApp := os.NewFile(uintptr(controlSocketPair[1]), "")
 	defer controlSocketApp.Close()
-	defer cancel() // Defer the context cancel only after controlSocket.Close() to prevent error.
 	go func() {
 		defer controlSocket.Close()
 		instance.manageControlSocket(ctx, controlSocket)

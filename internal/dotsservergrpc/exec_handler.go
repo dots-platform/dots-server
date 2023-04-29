@@ -26,9 +26,6 @@ func init() {
 }
 
 func (s *DotsServerGrpc) Exec(ctx context.Context, app *dotspb.App) (*dotspb.Result, error) {
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
 	ctx = util.ContextWithLogger(ctx, util.LoggerFromContext(ctx).With(
 		"appName", app.GetAppName(),
 		"appFuncName", app.GetFuncName(),
