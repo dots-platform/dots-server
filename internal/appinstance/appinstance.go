@@ -64,9 +64,10 @@ func (instance *AppInstance) execute(ctx context.Context, appPath string, appNam
 	controlSocket := os.NewFile(uintptr(controlSocketPair[0]), "")
 	controlSocketApp := os.NewFile(uintptr(controlSocketPair[1]), "")
 	defer controlSocketApp.Close()
+	controlDone := make(chan controlResult)
 	go func() {
 		defer controlSocket.Close()
-		instance.manageControlSocket(ctx, controlSocket)
+		instance.manageControlSocket(ctx, controlSocket, controlDone)
 	}()
 
 	// Run program.
@@ -86,6 +87,7 @@ func (instance *AppInstance) execute(ctx context.Context, appPath string, appNam
 		return
 	}
 	defer cmd.Process.Kill()
+	controlSocketApp.Close()
 
 	// Generate input for DoTS app environment. Per https://pkg.go.dev/os/exec,
 	// the i'th entry of cmd.ExtraFiles is mapped to FD 3 + i, so the loop
@@ -149,7 +151,12 @@ func (instance *AppInstance) execute(ctx context.Context, appPath string, appNam
 		return
 	}
 
-	instance.done <- appResult{output: instance.outputBuf.Bytes()}
+	// Get result from controller.
+	controlRes := <-controlDone
+
+	instance.done <- appResult{
+		output: controlRes.output,
+	}
 }
 
 func (instance *AppInstance) Wait() ([]byte, error) {

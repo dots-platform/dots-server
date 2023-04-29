@@ -24,6 +24,10 @@ const (
 	controlMsgTypeOutput                     = 5
 )
 
+type controlResult struct {
+	output []byte
+}
+
 func (t controlMsgType) String() string {
 	switch t {
 	case controlMsgTypeMsgSend:
@@ -210,7 +214,7 @@ func (instance *AppInstance) handleControlMsg(ctx context.Context, controlSocket
 	}
 }
 
-func (instance *AppInstance) manageControlSocket(ctx context.Context, controlSocket *os.File) {
+func (instance *AppInstance) manageControlSocket(ctx context.Context, controlSocket *os.File, done chan controlResult) {
 	instance.controlSocket = controlSocket
 
 	for {
@@ -219,5 +223,9 @@ func (instance *AppInstance) manageControlSocket(ctx context.Context, controlSoc
 			break
 		}
 		instance.handleControlMsg(ctx, controlSocket, controlMsg, payload)
+	}
+
+	done <- controlResult{
+		output: instance.outputBuf.Bytes(),
 	}
 }
