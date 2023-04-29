@@ -30,7 +30,6 @@ type AppInstance struct {
 	controlSocketSendMutex sync.Mutex
 	controlSocketRecvMutex sync.Mutex
 
-	cmd       *exec.Cmd
 	outputBuf bytes.Buffer
 
 	done chan appResult
@@ -71,25 +70,25 @@ func (instance *AppInstance) execute(ctx context.Context, appPath string, appNam
 	}()
 
 	// Run program.
-	instance.cmd = exec.CommandContext(ctx, appPath)
-	instance.cmd.ExtraFiles = append(instance.cmd.ExtraFiles, controlSocketApp)
-	instance.cmd.ExtraFiles = append(instance.cmd.ExtraFiles, inputFiles...)
-	instance.cmd.ExtraFiles = append(instance.cmd.ExtraFiles, outputFiles...)
-	stdin, err := instance.cmd.StdinPipe()
+	cmd := exec.CommandContext(ctx, appPath)
+	cmd.ExtraFiles = append(cmd.ExtraFiles, controlSocketApp)
+	cmd.ExtraFiles = append(cmd.ExtraFiles, inputFiles...)
+	cmd.ExtraFiles = append(cmd.ExtraFiles, outputFiles...)
+	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		util.LoggerFromContext(ctx).Error("Error opening application stdin pipe", "err", err)
 		instance.done <- appResult{err: err}
 		return
 	}
-	if err := instance.cmd.Start(); err != nil {
+	if err := cmd.Start(); err != nil {
 		util.LoggerFromContext(ctx).Error("Error starting application", "err", err)
 		instance.done <- appResult{err: err}
 		return
 	}
-	defer instance.cmd.Process.Kill()
+	defer cmd.Process.Kill()
 
 	// Generate input for DoTS app environment. Per https://pkg.go.dev/os/exec,
-	// the i'th entry of instance.cmd.ExtraFiles is mapped to FD 3 + i, so the loop
+	// the i'th entry of cmd.ExtraFiles is mapped to FD 3 + i, so the loop
 	// relies only on the lengths inputFiles, outputFiles, and sockets.
 	// Fixed header inputs.
 	var envHeader appEnvHeader
@@ -144,7 +143,7 @@ func (instance *AppInstance) execute(ctx context.Context, appPath string, appNam
 	}
 
 	// Wait for application to finish.
-	if err := instance.cmd.Wait(); err != nil {
+	if err := cmd.Wait(); err != nil {
 		util.LoggerFromContext(ctx).Warn("Application exited with non-zero return code", "err", err)
 		instance.done <- appResult{err: err}
 		return
