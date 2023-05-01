@@ -15,7 +15,7 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/exp/slog"
 
-	"github.com/dtrust-project/dtrust-server/internal/config"
+	"github.com/dtrust-project/dots-server/internal/config"
 )
 
 type MsgType uint16

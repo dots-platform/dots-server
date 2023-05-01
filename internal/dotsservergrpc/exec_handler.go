@@ -12,9 +12,9 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 
-	"github.com/dtrust-project/dtrust-server/internal/appinstance"
-	"github.com/dtrust-project/dtrust-server/internal/serverconn"
-	"github.com/dtrust-project/dtrust-server/internal/util"
+	"github.com/dtrust-project/dots-server/internal/appinstance"
+	"github.com/dtrust-project/dots-server/internal/serverconn"
+	"github.com/dtrust-project/dots-server/internal/util"
 )
 
 type execBarrierTag struct {

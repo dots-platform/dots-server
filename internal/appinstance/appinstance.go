@@ -11,9 +11,9 @@ import (
 
 	"golang.org/x/exp/slog"
 
-	"github.com/dtrust-project/dtrust-server/internal/config"
-	"github.com/dtrust-project/dtrust-server/internal/serverconn"
-	"github.com/dtrust-project/dtrust-server/internal/util"
+	"github.com/dtrust-project/dots-server/internal/config"
+	"github.com/dtrust-project/dots-server/internal/serverconn"
+	"github.com/dtrust-project/dots-server/internal/util"
 )
 
 type appResult struct {

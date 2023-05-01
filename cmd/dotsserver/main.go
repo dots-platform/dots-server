@@ -11,8 +11,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
-	"github.com/dtrust-project/dtrust-server/internal/config"
-	"github.com/dtrust-project/dtrust-server/internal/dotsservergrpc"
+	"github.com/dtrust-project/dots-server/internal/config"
+	"github.com/dtrust-project/dots-server/internal/dotsservergrpc"
 )
 
 var programLogLevel = new(slog.LevelVar)

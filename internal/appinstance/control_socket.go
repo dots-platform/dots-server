@@ -11,7 +11,7 @@ import (
 	"os"
 	"syscall"
 
-	"github.com/dtrust-project/dtrust-server/internal/util"
+	"github.com/dtrust-project/dots-server/internal/util"
 )
 
 type controlMsgType uint16

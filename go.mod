@@ -1,4 +1,4 @@
-module github.com/dtrust-project/dtrust-server
+module github.com/dtrust-project/dots-server
 
 go 1.19
 
