@@ -21,7 +21,12 @@ const (
 	controlMsgTypeMsgSend     controlMsgType = 2
 	controlMsgTypeMsgRecv                    = 3
 	controlMsgTypeMsgRecvResp                = 4
+	controlMsgTypeOutput                     = 5
 )
+
+type controlResult struct {
+	output []byte
+}
 
 func (t controlMsgType) String() string {
 	switch t {
@@ -31,6 +36,8 @@ func (t controlMsgType) String() string {
 		return "MSG_RECV"
 	case controlMsgTypeMsgRecvResp:
 		return "MSG_RECV_RESP"
+	case controlMsgTypeOutput:
+		return "OUTPUT"
 	default:
 		return fmt.Sprintf("INVALID: 0x%04x", uint16(t))
 	}
@@ -63,6 +70,8 @@ type controlMsgDataMsgRecv struct {
 	Sender uint32
 	Tag    uint32
 }
+
+type controlMsgDataOutput struct{}
 
 type appMsgTag struct {
 	Tag int
@@ -181,25 +190,31 @@ func (instance *AppInstance) handleMsgRecvControlMsg(ctx context.Context, msg *c
 	}()
 }
 
+func (instance *AppInstance) handleOutputControlMsg(ctx context.Context, payload []byte) {
+	instance.outputBuf.Write(payload)
+}
+
 func (instance *AppInstance) handleControlMsg(ctx context.Context, controlSocket *os.File, msg *controlMsg, payload []byte) {
-	cmdCtx := util.ContextWithLogger(ctx, util.LoggerFromContext(ctx).With(
+	ctx = util.ContextWithLogger(ctx, util.LoggerFromContext(ctx).With(
 		"cmd", msg.Type,
 		"cmdPayloadLen", msg.PayloadLen,
 	))
-	util.LoggerFromContext(cmdCtx).Debug("Received control command")
+	util.LoggerFromContext(ctx).Debug("Received control command")
 
 	// Dispatch command.
 	switch msg.Type {
 	case controlMsgTypeMsgSend:
-		instance.handleMsgSendControlMsg(cmdCtx, msg, payload)
+		instance.handleMsgSendControlMsg(ctx, msg, payload)
 	case controlMsgTypeMsgRecv:
-		instance.handleMsgRecvControlMsg(cmdCtx, msg)
+		instance.handleMsgRecvControlMsg(ctx, msg)
+	case controlMsgTypeOutput:
+		instance.handleOutputControlMsg(ctx, payload)
 	default:
-		util.LoggerFromContext(cmdCtx).Warn("Application issued invalid control message type")
+		util.LoggerFromContext(ctx).Warn("Application issued invalid control message type")
 	}
 }
 
-func (instance *AppInstance) manageControlSocket(ctx context.Context, controlSocket *os.File) {
+func (instance *AppInstance) manageControlSocket(ctx context.Context, controlSocket *os.File, done chan controlResult) {
 	instance.controlSocket = controlSocket
 
 	for {
@@ -208,5 +223,9 @@ func (instance *AppInstance) manageControlSocket(ctx context.Context, controlSoc
 			break
 		}
 		instance.handleControlMsg(ctx, controlSocket, controlMsg, payload)
+	}
+
+	done <- controlResult{
+		output: instance.outputBuf.Bytes(),
 	}
 }

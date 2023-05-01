@@ -26,9 +26,6 @@ func init() {
 }
 
 func (s *DotsServerGrpc) Exec(ctx context.Context, app *dotspb.App) (*dotspb.Result, error) {
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
 	ctx = util.ContextWithLogger(ctx, util.LoggerFromContext(ctx).With(
 		"appName", app.GetAppName(),
 		"appFuncName", app.GetFuncName(),
@@ -122,10 +119,21 @@ func (s *DotsServerGrpc) Exec(ctx context.Context, app *dotspb.App) (*dotspb.Res
 		util.LoggerFromContext(ctx).Error("Error spawning app instance", "err", err)
 		return nil, grpc.Errorf(codes.Internal, internalErrMsg)
 	}
-	if err := instance.Wait(); err != nil {
+	output, err := instance.Wait()
+	if err != nil {
 		util.LoggerFromContext(ctx).Error("Error spawning app instance", "err", err)
 		return nil, grpc.Errorf(codes.Internal, internalErrMsg)
 	}
 
-	return &dotspb.Result{Result: "success"}, nil
+	util.LoggerFromContext(ctx).Info("Application finished",
+		"output", output,
+	)
+	util.LoggerFromContext(ctx).Debug("Application finished with output",
+		"output", output,
+	)
+
+	return &dotspb.Result{
+		Result: "success",
+		Output: output,
+	}, nil
 }
