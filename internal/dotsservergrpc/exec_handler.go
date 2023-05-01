@@ -117,7 +117,7 @@ func (s *DotsServerGrpc) Exec(ctx context.Context, app *dotspb.App) (*dotspb.Res
 	s.controlComm.Barrier(execBarrierTag{requestId})
 
 	// Start app.
-	instance, err := appinstance.ExecApp(ctx, s.config, appConfig.Path, app.GetAppName(), app.GetFuncName(), inputFiles, outputFiles, conns)
+	instance, err := appinstance.ExecApp(ctx, s.config, appConfig.Path, app.GetAppName(), app.GetFuncName(), inputFiles, outputFiles, app.GetArgs(), conns)
 	if err != nil {
 		util.LoggerFromContext(ctx).Error("Error spawning app instance", "err", err)
 		return nil, grpc.Errorf(codes.Internal, internalErrMsg)
