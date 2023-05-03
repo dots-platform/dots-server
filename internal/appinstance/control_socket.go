@@ -26,6 +26,7 @@ const (
 	controlMsgTypeOutput                       = 5
 	controlMsgTypeReqAccept                    = 6
 	controlMsgTypeReqAcceptResp                = 7
+	controlMsgTypeReqFinish                    = 8
 )
 
 type controlResult struct {
@@ -46,6 +47,8 @@ func (t controlMsgType) String() string {
 		return "REQ_ACCEPT"
 	case controlMsgTypeReqAcceptResp:
 		return "REQ_ACCEPT_RESP"
+	case controlMsgTypeReqFinish:
+		return "REQ_FINISH"
 	default:
 		return fmt.Sprintf("INVALID: 0x%04x", uint16(t))
 	}
@@ -268,6 +271,21 @@ func (instance *AppInstance) handleReqAcceptControlMsg(ctx context.Context, req 
 	}()
 }
 
+func (instance *AppInstance) handleReqFinishControlMsg(ctx context.Context, req *AppRequest, msg *controlMsg, payload []byte) {
+	if req == nil {
+		util.LoggerFromContext(ctx).Warn("Application issued REQ_FINISH command with nil request")
+		return
+	}
+
+	req.done <- appResult{req.outputBuf.Bytes(), nil}
+
+	func() {
+		instance.requestsMutex.Lock()
+		defer instance.requestsMutex.Unlock()
+		delete(instance.requests, req.Id)
+	}()
+}
+
 func (instance *AppInstance) handleControlMsg(ctx context.Context, req *AppRequest, msg *controlMsg, payload []byte) {
 	util.LoggerFromContext(ctx).Debug("Received control command")
 
@@ -281,6 +299,8 @@ func (instance *AppInstance) handleControlMsg(ctx context.Context, req *AppReque
 		instance.handleOutputControlMsg(ctx, req, msg, payload)
 	case controlMsgTypeReqAccept:
 		instance.handleReqAcceptControlMsg(ctx, req, msg, payload)
+	case controlMsgTypeReqFinish:
+		instance.handleReqFinishControlMsg(ctx, req, msg, payload)
 	default:
 		util.LoggerFromContext(ctx).Warn("Application issued invalid control message type")
 	}
