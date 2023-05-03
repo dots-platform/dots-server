@@ -18,7 +18,7 @@ N=$1
 pids=
 trap 'kill $pids 2>/dev/null' INT QUIT TERM EXIT
 
-while [ "$#" -ge 1 -a "${1:?x}" != '--' ]; do
+while [ "$#" -ge 1 ] && [ "$1" != '--' ]; do
     shift
 done
 if [ "$#" -ge 1 ]; then
