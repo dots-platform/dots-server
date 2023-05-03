@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/exp/slog"
 
+	"github.com/dtrust-project/dots-server/internal/appinstance"
 	"github.com/dtrust-project/dots-server/internal/config"
 	"github.com/dtrust-project/dots-server/internal/serverconn"
 )
@@ -18,6 +19,8 @@ type DotsServerGrpc struct {
 	controlComm *serverconn.ServerComm
 	config      *config.Config
 
+	apps map[string]*appinstance.AppInstance
+
 	dotspb.UnimplementedDecExecServer
 }
 
@@ -27,6 +30,8 @@ var _ dotspb.DecExecServer = (*DotsServerGrpc)(nil)
 func NewDotsServerGrpc(nodeId string, config *config.Config) (*DotsServerGrpc, error) {
 	server := &DotsServerGrpc{
 		config: config,
+
+		apps: make(map[string]*appinstance.AppInstance),
 	}
 
 	// Establish server-to-server connection.
@@ -44,6 +49,28 @@ func NewDotsServerGrpc(nodeId string, config *config.Config) (*DotsServerGrpc, e
 	server.controlComm = controlComm
 
 	slog.Info("Server connections established")
+
+	// Spawn application instances.
+	for appName, appConfig := range config.Apps {
+		appComm, err := server.conns.Register(context.Background(), serverconn.MsgTypeAppInstance, uuid.Nil)
+		if err != nil {
+			slog.Error("Failed to establish application communicator", "err", err)
+			return nil, err
+		}
+
+		instance, err := appinstance.Spawn(config, appConfig.Path, appName, appComm)
+		if err != nil {
+			slog.Error("Failed to construct application instance", "err", err,
+				"appName", appName,
+				"appPath", appConfig.Path,
+			)
+			return nil, err
+		}
+
+		server.apps[appName] = instance
+	}
+
+	slog.Info("Spawned application instances")
 
 	return server, nil
 }
