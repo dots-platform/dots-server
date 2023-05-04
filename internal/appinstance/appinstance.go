@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"os"
 	"os/exec"
+	"path"
 	"sync"
 	"syscall"
 
@@ -77,8 +78,21 @@ func (instance *AppInstance) execute(ctx context.Context, appPath string, appNam
 		instance.manageControlSocket(ctx, controlSocket, controlDone)
 	}()
 
+	// Get absolute app path.
+	if appPath[0] != '/' {
+		workdir, err := os.Getwd()
+		if err != nil {
+			util.LoggerFromContext(ctx).Error("Failed to get current working directory", "err", err)
+			instance.done <- appResult{err: err}
+			return
+		}
+		appPath = path.Clean(path.Join(workdir, appPath))
+	}
+
 	// Run program.
 	cmd := exec.CommandContext(ctx, appPath)
+	cmd.Dir = path.Join(instance.config.FileStorageDir, instance.config.OurNodeId)
+	os.MkdirAll(cmd.Dir, 0o755)
 	cmd.ExtraFiles = append(cmd.ExtraFiles, controlSocketApp)
 	cmd.ExtraFiles = append(cmd.ExtraFiles, inputFiles...)
 	cmd.ExtraFiles = append(cmd.ExtraFiles, outputFiles...)
