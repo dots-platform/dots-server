@@ -32,15 +32,8 @@ type NodeConfig struct {
 	Addr  string `yaml:"addr"`
 	Ports []int  `yaml:"ports"`
 
-	PeerTLSCertFile    string `yaml:"peer_tls_cert_file"`
-	PeerTLSCertKeyFile string `yaml:"peer_tls_cert_key_file"`
-
-	// The parsed X.509 cert.
-	PeerTLSCertX509 *x509.Certificate
-
-	// The parsed TLS cert, including the private key, only if PeerTLSCertKeyFile
-	// is set.
-	PeerTLSCertTLS tls.Certificate
+	PeerTLSCertFile string `yaml:"peer_tls_cert_file"`
+	PeerTLSCert     *x509.Certificate
 }
 
 type AppConfig struct {
@@ -48,7 +41,10 @@ type AppConfig struct {
 }
 
 type Config struct {
-	PeerSecurity PeerSecurity `yaml:"peer_security"`
+	PeerSecurity       PeerSecurity `yaml:"peer_security"`
+	PeerTLSCertFile    string       `yaml:"peer_tls_cert_file"`
+	PeerTLSCertKeyFile string       `yaml:"peer_tls_cert_key_file"`
+	PeerTLSCert        tls.Certificate
 
 	GRPCSecurity       GRPCSecurity `yaml:"grpc_security"`
 	GRPCTLSCertFile    string       `yaml:"grpc_tls_cert_file"`
@@ -70,16 +66,26 @@ type Config struct {
 
 func verifyConfig(conf *Config, ourNodeId string) error {
 	// Verify config.
+
 	if conf.FileStorageDir == "" {
 		return errors.New("Missing file_storage_dir")
 	}
+
 	switch conf.PeerSecurity {
 	case "":
 		return errors.New("Missing peer_security")
-	case PeerSecurityNone, PeerSecurityTLS:
+	case PeerSecurityNone:
+	case PeerSecurityTLS:
+		if conf.PeerTLSCertFile == "" {
+			return errors.New("Missing peer_tls_cert_file when peer_security = tls")
+		}
+		if conf.PeerTLSCertKeyFile == "" {
+			return errors.New("Missing peer_tls_cert_key_file when peer_security = tls")
+		}
 	default:
 		return fmt.Errorf("Invalid value for peer_security: %s", conf.PeerSecurity)
 	}
+
 	switch conf.GRPCSecurity {
 	case "":
 		return errors.New("Missing grpc_security")
@@ -96,7 +102,7 @@ func verifyConfig(conf *Config, ourNodeId string) error {
 	}
 
 	// Verify node configs.
-	for nodeId, nodeConfig := range conf.Nodes {
+	for _, nodeConfig := range conf.Nodes {
 		if nodeConfig.Addr == "" {
 			return errors.New("Missing addr from node config")
 		}
@@ -105,14 +111,6 @@ func verifyConfig(conf *Config, ourNodeId string) error {
 		}
 		if len(nodeConfig.Ports) != len(conf.Nodes) {
 			return errors.New("Number of ports in node config not equal to number of nodes")
-		}
-		if conf.PeerSecurity == PeerSecurityTLS {
-			if nodeConfig.PeerTLSCertFile == "" {
-				return errors.New("Missing peer_tls_cert_file from node config when peer_security = tls")
-			}
-			if nodeId == ourNodeId && nodeConfig.PeerTLSCertKeyFile == "" {
-				return errors.New("Missing peer_tls_key_file from our node config when peer_security = tls")
-			}
 		}
 	}
 
@@ -194,6 +192,17 @@ func ReadConfig(configPath string, ourNodeId string) (*Config, error) {
 	}
 	config.OurNodeConfig = config.Nodes[ourNodeId]
 
+	// Load peer cert if necessary.
+	if config.PeerSecurity == PeerSecurityTLS {
+		certPath := path.Join(path.Dir(configPath), config.PeerTLSCertFile)
+		keyPath := path.Join(path.Dir(configPath), config.PeerTLSCertKeyFile)
+		tlsCert, err := tls.LoadX509KeyPair(certPath, keyPath)
+		if err != nil {
+			return nil, err
+		}
+		config.PeerTLSCert = tlsCert
+	}
+
 	// Load GRPC cert if necessary.
 	if config.GRPCSecurity == GRPCSecurityTLS {
 		certPath := path.Join(path.Dir(configPath), config.GRPCTLSCertFile)
@@ -210,35 +219,19 @@ func ReadConfig(configPath string, ourNodeId string) (*Config, error) {
 		// Load TLS cert (and key if present) if TLS is enabled.
 		if config.PeerSecurity == PeerSecurityTLS {
 			certPath := path.Join(path.Dir(configPath), nodeConfig.PeerTLSCertFile)
-			if nodeConfig.PeerTLSCertKeyFile == "" {
-				// Load only cert.
-				pemBytes, err := os.ReadFile(certPath)
-				if err != nil {
-					return nil, err
-				}
-				block, _ := pem.Decode(pemBytes)
-				if block == nil {
-					return nil, errors.New("No PEM block in certificate: " + nodeConfig.PeerTLSCertFile)
-				}
-				cert, err := x509.ParseCertificate(block.Bytes)
-				if err != nil {
-					return nil, err
-				}
-				nodeConfig.PeerTLSCertX509 = cert
-			} else {
-				// Load cert and key.
-				keyPath := path.Join(path.Dir(configPath), nodeConfig.PeerTLSCertKeyFile)
-				tlsCert, err := tls.LoadX509KeyPair(certPath, keyPath)
-				if err != nil {
-					return nil, err
-				}
-				cert, err := x509.ParseCertificate(tlsCert.Certificate[0])
-				if err != nil {
-					return nil, err
-				}
-				nodeConfig.PeerTLSCertTLS = tlsCert
-				nodeConfig.PeerTLSCertX509 = cert
+			pemBytes, err := os.ReadFile(certPath)
+			if err != nil {
+				return nil, err
 			}
+			block, _ := pem.Decode(pemBytes)
+			if block == nil {
+				return nil, errors.New("No PEM block in certificate: " + nodeConfig.PeerTLSCertFile)
+			}
+			cert, err := x509.ParseCertificate(block.Bytes)
+			if err != nil {
+				return nil, err
+			}
+			nodeConfig.PeerTLSCert = cert
 		}
 	}
 
