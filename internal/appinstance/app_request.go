@@ -27,8 +27,6 @@ type AppRequest struct {
 
 type appReqInput struct {
 	Id                uuid.UUID
-	WorldRank         uint32
-	WorldSize         uint32
 	InputFilesOffset  uint32
 	InputFilesCount   uint32
 	OutputFilesOffset uint32
@@ -36,7 +34,7 @@ type appReqInput struct {
 	FuncNameOffset    uint32
 	ArgsOffset        uint32
 	ArgsCount         uint32
-	_                 [76]byte
+	_                 [84]byte
 }
 
 type appEnvIovec struct {

@@ -219,8 +219,6 @@ func (instance *AppInstance) handleReqAcceptControlMsg(ctx context.Context, req 
 		var reqInputHeader appReqInput
 		reqInputOffset := uint32(0)
 		reqInputHeader.Id = nextReq.Id
-		reqInputHeader.WorldRank = uint32(instance.config.OurNodeRank)
-		reqInputHeader.WorldSize = uint32(len(instance.config.Nodes))
 		reqInputOffset += uint32(binary.Size(&reqInputHeader))
 		reqInputBytes := make([]byte, reqInputOffset)
 

@@ -3,6 +3,7 @@ package appinstance
 import (
 	"bufio"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -45,6 +46,19 @@ type AppInstance struct {
 
 const pendingRequestsBufLen = 100
 
+type appEnvInput struct {
+	ControlSocket uint32
+	WorldRank     uint32
+	WorldSize     uint32
+	_             [116]byte
+}
+
+func init() {
+	if binary.Size(&appEnvInput{}) != 128 {
+		panic("App environment input must be 128 bytes long")
+	}
+}
+
 func Spawn(conf *config.Config, appPath string, appName string, serverComm *serverconn.ServerComm) (*AppInstance, error) {
 	ctx := util.ContextWithLogger(context.Background(), slog.With(
 		"appName", appName,
@@ -76,6 +90,12 @@ func Spawn(conf *config.Config, appPath string, appName string, serverComm *serv
 	cmd.Dir = path.Join(conf.FileStorageDir, conf.OurNodeId)
 	os.MkdirAll(cmd.Dir, 0o755)
 	cmd.ExtraFiles = append(cmd.ExtraFiles, controlSocketApp)
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		util.LoggerFromContext(ctx).Error("Failed to open application stdin pipe", "err", err)
+		return nil, err
+	}
+	defer stdin.Close()
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		util.LoggerFromContext(ctx).Error("Failed to open application stdout pipe", "err", err)
@@ -117,6 +137,16 @@ func Spawn(conf *config.Config, appPath string, appName string, serverComm *serv
 		return nil, err
 	}
 	controlSocketApp.Close()
+
+	// Write startup environment to application stdin.
+	appEnv := appEnvInput{
+		ControlSocket: 3,
+		WorldRank:     uint32(conf.OurNodeRank),
+		WorldSize:     uint32(len(conf.Nodes)),
+	}
+	if err := binary.Write(stdin, binary.BigEndian, &appEnv); err != nil {
+		util.LoggerFromContext(ctx).Error("Failed to write startup environment to application stdin", "err", err)
+	}
 
 	instance := &AppInstance{
 		AppName: appName,
