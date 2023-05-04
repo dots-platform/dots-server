@@ -2,9 +2,9 @@ package dotsservergrpc
 
 import (
 	"context"
+	"encoding/gob"
 
 	"github.com/dtrust-project/dotspb/go/dotspb"
-	"github.com/google/uuid"
 	"golang.org/x/exp/slog"
 
 	"github.com/dtrust-project/dots-server/internal/appinstance"
@@ -27,6 +27,16 @@ type DotsServerGrpc struct {
 // Assert DotsServerGrpc fulfills dotspb.DecExecServer.
 var _ dotspb.DecExecServer = (*DotsServerGrpc)(nil)
 
+type platformCommId struct{}
+
+type appCommId struct {
+	AppName string
+}
+
+func init() {
+	gob.Register(appCommId{})
+}
+
 func NewDotsServerGrpc(nodeId string, config *config.Config) (*DotsServerGrpc, error) {
 	server := &DotsServerGrpc{
 		config: config,
@@ -41,7 +51,7 @@ func NewDotsServerGrpc(nodeId string, config *config.Config) (*DotsServerGrpc, e
 	}
 
 	// Establish a communicator for control messages.
-	controlComm, err := server.conns.Register(context.Background(), serverconn.MsgTypePlatform, uuid.Nil)
+	controlComm, err := server.conns.Register(context.Background(), platformCommId{})
 	if err != nil {
 		slog.Error("Failed to establish server control communicator", "err", err)
 		return nil, err
@@ -52,7 +62,7 @@ func NewDotsServerGrpc(nodeId string, config *config.Config) (*DotsServerGrpc, e
 
 	// Spawn application instances.
 	for appName, appConfig := range config.Apps {
-		appComm, err := server.conns.Register(context.Background(), serverconn.MsgTypeAppInstance, uuid.Nil)
+		appComm, err := server.conns.Register(context.Background(), appCommId{appName})
 		if err != nil {
 			slog.Error("Failed to establish application communicator", "err", err)
 			return nil, err

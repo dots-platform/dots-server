@@ -12,29 +12,10 @@ import (
 	"sync"
 
 	"github.com/avast/retry-go"
-	"github.com/google/uuid"
 	"golang.org/x/exp/slog"
 
 	"github.com/dtrust-project/dots-server/internal/config"
 )
-
-type MsgType uint16
-
-const (
-	MsgTypePlatform    MsgType = 1
-	MsgTypeAppInstance         = 2
-)
-
-func (t MsgType) String() string {
-	switch t {
-	case MsgTypePlatform:
-		return "PLATFORM"
-	case MsgTypeAppInstance:
-		return "APP_INSTANCE"
-	default:
-		return fmt.Sprintf("INVALID: 0x%04x", uint16(t))
-	}
-}
 
 type Channels struct {
 	Send chan any
@@ -45,7 +26,7 @@ type ServerConn struct {
 	connections map[string]net.Conn
 	encoders    map[string]*gob.Encoder
 	decoders    map[string]*gob.Decoder
-	comms       map[MsgType]map[uuid.UUID]*ServerComm
+	comms       map[any]*ServerComm
 	mutex       sync.RWMutex
 	config      *config.Config
 }
@@ -53,21 +34,15 @@ type ServerConn struct {
 func (c *ServerConn) handleIncomingMessage(nodeId string, msg *serverMsg) {
 	msgLog := slog.With(
 		"otherNodeId", nodeId,
-		"msgType", msg.Type,
-		"msgSubtypeId", msg.SubtypeId,
+		"commId", msg.CommId,
+		"msgTag", msg.Tag,
 	)
 	msgLog.Debug("Received server message")
 
 	c.mutex.RLock()
 	defer c.mutex.RUnlock()
 
-	typeComms, ok := c.comms[msg.Type]
-	if !ok {
-		msgLog.Warn("Received message with no listener")
-		return
-	}
-
-	comm, ok := typeComms[msg.SubtypeId]
+	comm, ok := c.comms[msg.CommId]
 	if !ok {
 		msgLog.Warn("Received message with no listener")
 		return
@@ -93,7 +68,7 @@ func (c *ServerConn) handleIncomingMessage(nodeId string, msg *serverMsg) {
 		func() {
 			c.mutex.RUnlock()
 			defer c.mutex.RLock()
-			c.Unregister(msg.Type, msg.SubtypeId)
+			c.Unregister(msg.CommId)
 		}()
 	}
 }
@@ -244,54 +219,43 @@ func (c *ServerConn) Establish(conf *config.Config) error {
 	c.connections = conns
 	c.encoders = encoders
 	c.decoders = decoders
-	c.comms = make(map[MsgType]map[uuid.UUID]*ServerComm)
+	c.comms = make(map[any]*ServerComm)
 
 	return nil
 }
 
-func (c *ServerConn) Register(ctx context.Context, msgType MsgType, id uuid.UUID) (*ServerComm, error) {
+func (c *ServerConn) Register(ctx context.Context, commId any) (*ServerComm, error) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
 	// Ensure comm doesn't already exist.
-	typeComms, ok := c.comms[msgType]
-	if !ok {
-		typeComms = make(map[uuid.UUID]*ServerComm)
-		c.comms[msgType] = typeComms
-	}
-	if _, ok := typeComms[id]; ok {
+	if _, ok := c.comms[commId]; ok {
 		return nil, errors.New("Channel already exists for message type and ID")
 	}
 
 	// Make comm.
 	comm := &ServerComm{
-		msgType:   msgType,
-		subtypeId: id,
-		recvBuf:   make(map[string]map[any]chan any),
-		conn:      c,
+		commId:  commId,
+		recvBuf: make(map[string]map[any]chan any),
+		conn:    c,
 		logger: slog.With(
-			"msgType", msgType,
-			"msgSubtypeId", id,
+			"commId", commId,
 		),
 	}
 	for nodeId := range c.config.Nodes {
 		comm.recvBuf[nodeId] = make(map[any]chan any)
 	}
 
-	typeComms[id] = comm
+	c.comms[commId] = comm
 
 	return comm, nil
 }
 
-func (c *ServerConn) Unregister(msgType MsgType, id uuid.UUID) {
+func (c *ServerConn) Unregister(commId any) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
-	typeComms, ok := c.comms[msgType]
-	if !ok {
-		return
-	}
-	comm, ok := typeComms[id]
+	comm, ok := c.comms[commId]
 	if !ok {
 		return
 	}
@@ -300,19 +264,17 @@ func (c *ServerConn) Unregister(msgType MsgType, id uuid.UUID) {
 			close(c)
 		}
 	}
-	delete(typeComms, id)
+	delete(c.comms, commId)
 }
 
 func (c *ServerConn) CloseAll() {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
-	for _, typeComms := range c.comms {
-		for _, comm := range typeComms {
-			for _, nodeChans := range comm.recvBuf {
-				for _, c := range nodeChans {
-					close(c)
-				}
+	for _, comm := range c.comms {
+		for _, nodeChans := range comm.recvBuf {
+			for _, c := range nodeChans {
+				close(c)
 			}
 		}
 	}
