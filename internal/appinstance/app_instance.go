@@ -1,10 +1,14 @@
 package appinstance
 
 import (
+	"bufio"
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"path"
 	"sync"
 	"syscall"
 
@@ -57,13 +61,57 @@ func Spawn(conf *config.Config, appPath string, appName string, serverComm *serv
 	controlSocketApp := os.NewFile(uintptr(controlSocketPair[1]), "")
 	defer controlSocketApp.Close()
 
+	// Get absolute app path.
+	if appPath[0] != '/' {
+		workdir, err := os.Getwd()
+		if err != nil {
+			util.LoggerFromContext(ctx).Error("Failed to get current working directory", "err", err)
+			return nil, err
+		}
+		appPath = path.Clean(path.Join(workdir, appPath))
+	}
+
 	// Run program.
 	cmd := exec.CommandContext(ctx, appPath)
+	cmd.Dir = path.Join(conf.FileStorageDir, conf.OurNodeId)
+	os.MkdirAll(cmd.Dir, 0o755)
 	cmd.ExtraFiles = append(cmd.ExtraFiles, controlSocketApp)
+	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		util.LoggerFromContext(ctx).Error("Error opening application stdin pipe", "err", err)
+		util.LoggerFromContext(ctx).Error("Failed to open application stdout pipe", "err", err)
 		return nil, err
 	}
+	go func() {
+		defer stdout.Close()
+		reader := bufio.NewReader(stdout)
+		for {
+			line, _, err := reader.ReadLine()
+			if err != nil {
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				util.LoggerFromContext(ctx).Error("Failed reading application stdout", "err", err)
+				break
+			}
+			fmt.Printf("[%s stdout] %s\n", appName, line)
+		}
+	}()
+	stderr, err := cmd.StderrPipe()
+	go func() {
+		defer stderr.Close()
+		reader := bufio.NewReader(stderr)
+		for {
+			line, _, err := reader.ReadLine()
+			if err != nil {
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				util.LoggerFromContext(ctx).Error("Failed reading application stderr", "err", err)
+				break
+			}
+			fmt.Printf("[%s stderr] %s\n", appName, line)
+		}
+	}()
 	if err := cmd.Start(); err != nil {
 		util.LoggerFromContext(ctx).Error("Error starting application", "err", err)
 		return nil, err
