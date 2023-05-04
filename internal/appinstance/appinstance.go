@@ -1,9 +1,13 @@
 package appinstance
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
+	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path"
@@ -98,7 +102,50 @@ func (instance *AppInstance) execute(ctx context.Context, appPath string, appNam
 	cmd.ExtraFiles = append(cmd.ExtraFiles, outputFiles...)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		util.LoggerFromContext(ctx).Error("Error opening application stdin pipe", "err", err)
+		util.LoggerFromContext(ctx).Error("Failed to open application stdin pipe", "err", err)
+		instance.done <- appResult{err: err}
+		return
+	}
+	defer stdin.Close()
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		util.LoggerFromContext(ctx).Error("Failed to open application stdout pipe", "err", err)
+		instance.done <- appResult{err: err}
+		return
+	}
+	go func() {
+		defer stdout.Close()
+		reader := bufio.NewReader(stdout)
+		for {
+			line, _, err := reader.ReadLine()
+			if err != nil {
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				util.LoggerFromContext(ctx).Error("Failed reading application stdout", "err", err)
+				break
+			}
+			fmt.Printf("[%s stdout] %s\n", appName, line)
+		}
+	}()
+	stderr, err := cmd.StderrPipe()
+	go func() {
+		defer stderr.Close()
+		reader := bufio.NewReader(stderr)
+		for {
+			line, _, err := reader.ReadLine()
+			if err != nil {
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				util.LoggerFromContext(ctx).Error("Failed reading application stderr", "err", err)
+				break
+			}
+			fmt.Printf("[%s stderr] %s\n", appName, line)
+		}
+	}()
+	if err != nil {
+		util.LoggerFromContext(ctx).Error("Failed to open application stderr pipe", "err", err)
 		instance.done <- appResult{err: err}
 		return
 	}
