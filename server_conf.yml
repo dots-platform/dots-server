@@ -1,8 +1,11 @@
 ---
 peer_security: tls
+
 grpc_security: none
 grpc_tls_cert_file: snakeoil-cert.pem
 grpc_tls_cert_key_file: snakeoil-key.pem
+
+file_storage_dir: ./files
 
 nodes:
   node1:
@@ -17,5 +20,3 @@ nodes:
     peer_tls_cert_key_file: snakeoil-key.pem
 
 apps:
-
-file_storage_dir: ./files

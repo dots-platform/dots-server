@@ -48,20 +48,20 @@ type AppConfig struct {
 }
 
 type Config struct {
-	NodeIds   []string
-	NodeRanks map[string]int
-	Nodes     map[string]*NodeConfig `yaml:"nodes"`
-
-	Apps map[string]*AppConfig `yaml:"apps"`
-
-	FileStorageDir string `yaml:"file_storage_dir"`
-
 	PeerSecurity PeerSecurity `yaml:"peer_security"`
 
 	GRPCSecurity       GRPCSecurity `yaml:"grpc_security"`
 	GRPCTLSCertFile    string       `yaml:"grpc_tls_cert_file"`
 	GRPCTLSCertKeyFile string       `yaml:"grpc_tls_cert_key_file"`
 	GRPCTLSCert        tls.Certificate
+
+	FileStorageDir string `yaml:"file_storage_dir"`
+
+	Nodes     map[string]*NodeConfig `yaml:"nodes"`
+	NodeIds   []string
+	NodeRanks map[string]int
+
+	Apps map[string]*AppConfig `yaml:"apps"`
 
 	OurNodeId     string
 	OurNodeRank   int
