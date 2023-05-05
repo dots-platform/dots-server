@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/tls"
 	"flag"
+	"fmt"
 	"net"
 	"os"
 
@@ -22,9 +23,11 @@ func main() {
 	var configPath string
 	var nodeId string
 	var logLevel string
+	var listenOffset int
 	flag.StringVar(&configPath, "config", "", "Path to the config file")
 	flag.StringVar(&nodeId, "node_id", "", "ID of the DoTS node")
 	flag.StringVar(&logLevel, "log_level", "info", "Log level. One of: fatal, error, warn, info, debug")
+	flag.IntVar(&listenOffset, "listen_offset", 0, "Additive offset of the peer and gRPC ports to listen on relative to the the config. Useful for scripting multiple nodes using the same config.")
 	flag.Parse()
 	if configPath == "" || nodeId == "" {
 		flag.Usage()
@@ -48,7 +51,7 @@ func main() {
 	slog.SetDefault(slog.New(handlerOptions.NewTextHandler(os.Stderr)))
 
 	// Get config.
-	conf, err := config.ReadConfig(configPath, nodeId)
+	conf, err := config.ReadConfig(configPath, nodeId, listenOffset)
 	if err != nil {
 		slog.Error("Error reading config", "err", err)
 		os.Exit(1)
@@ -63,7 +66,7 @@ func main() {
 	defer dotsServer.Shutdown()
 
 	// Spawn gRPC service.
-	conn, err := net.Listen("tcp", conf.OurNodeConfig.Addr)
+	conn, err := net.Listen("tcp", fmt.Sprintf("%s:%d", conf.GRPCBindAddr, conf.GRPCPort))
 	if err != nil {
 		slog.Error("Failed to listen", "err", err)
 		os.Exit(1)

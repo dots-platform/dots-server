@@ -27,7 +27,7 @@ fi
 
 i=0
 while [ "$i" -lt "$N" ]; do
-    go run ./cmd/dotsserver -config server_conf.yml -node_id "node$(( i + 1 ))" "$@" &
+    go run ./cmd/dotsserver -config server_conf.yml -node_id "node$(( i + 1 ))" -listen_offset "$i" "$@" &
     pids="$pids $!"
     i=$(( i + 1 ))
 done
