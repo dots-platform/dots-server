@@ -120,63 +120,54 @@ func (c *ServerConn) receiveMessages(nodeId string, decoder *gob.Decoder) {
 func (c *ServerConn) Establish(conf *config.Config) error {
 	c.config = conf
 
-	// Set up pairwise TCP connections with all nodes.
+	// Start listener.
+	var tlsConfig *tls.Config
+	var listener net.Listener
+	if conf.PeerSecurity == config.PeerSecurityTLS {
+		// TODO Add server name to config somehow to authenticate server
+		// name as part of TLS connection.
+		tlsConfig = &tls.Config{
+			Certificates:       []tls.Certificate{conf.PeerTLSCert},
+			ClientAuth:         tls.RequireAnyClientCert,
+			InsecureSkipVerify: true,
+		}
+		l, err := tls.Listen("tcp", fmt.Sprintf("%s:%d", conf.PeerBindAddr, conf.PeerPort), tlsConfig)
+		if err != nil {
+			slog.Error("Failed to listen for TLS connections", "err", err)
+			return err
+		}
+		listener = l
+	} else {
+		l, err := net.Listen("tcp", fmt.Sprintf("%s:%d", conf.PeerBindAddr, conf.PeerPort))
+		if err != nil {
+			slog.Error("Failed to listen for TCP connecdtions", "err", err)
+			return err
+		}
+		listener = l
+	}
+	defer listener.Close()
+
+	// Set up pairwise connections with all nodes.
 	connChan := make(chan *struct {
 		nodeId string
 		conn   net.Conn
 	})
 	errChan := make(chan error)
-	ourRank := conf.NodeRanks[conf.OurNodeId]
-	ourConfig := conf.Nodes[conf.OurNodeId]
 	for nodeId, nodeConfig := range conf.Nodes {
-		go func(nodeId string, nodeConfig *config.NodeConfig) {
-			otherRank := conf.NodeRanks[nodeId]
-			if ourRank == otherRank {
-				return
-			}
+		if nodeId == conf.OurNodeId {
+			continue
+		}
 
-			var tlsConfig *tls.Config
-			if conf.PeerSecurity == config.PeerSecurityTLS {
-				// TODO Add server name to config somehow to authenticate server
-				// name as part of TLS connection.
-				tlsConfig = &tls.Config{
-					Certificates: []tls.Certificate{conf.PeerTLSCert},
-					ClientAuth:   tls.RequireAndVerifyClientCert,
-				}
-				if nodeConfig.PeerTLSCert != nil {
-					tlsConfig.InsecureSkipVerify = true
-					tlsConfig.ClientAuth = tls.RequireAnyClientCert
-					tlsConfig.VerifyPeerCertificate = func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
-						if !bytes.Equal(rawCerts[0], nodeConfig.PeerTLSCert.Raw) {
-							return errors.New("Peer certificate does not match pinned certificate")
-						}
-						return nil
-					}
-				}
-			}
+		go func(nodeId string, nodeConfig *config.NodeConfig) {
+			ourRank := conf.OurNodeRank
+			otherRank := conf.NodeRanks[nodeId]
 
 			var conn net.Conn
 			if ourRank < otherRank {
-				// Act as the listener for higher ranks.
-				var listener net.Listener
-				if conf.PeerSecurity == config.PeerSecurityTLS {
-					l, err := tls.Listen("tcp", fmt.Sprintf(":%d", ourConfig.Ports[otherRank]), tlsConfig)
-					if err != nil {
-						errChan <- err
-						return
-					}
-					listener = l
-				} else {
-					l, err := net.Listen("tcp", fmt.Sprintf(":%d", ourConfig.Ports[otherRank]))
-					if err != nil {
-						errChan <- err
-						return
-					}
-					listener = l
-				}
-				defer listener.Close()
+				// Act as listener for higher ranks.
 				c, err := listener.Accept()
 				if err != nil {
+					slog.Error("Failed to accept a connection", "err", err)
 					errChan <- err
 					return
 				}
@@ -186,13 +177,13 @@ func (c *ServerConn) Establish(conf *config.Config) error {
 				if err := retry.Do(
 					func() error {
 						if conf.PeerSecurity == config.PeerSecurityTLS {
-							c, err := tls.Dial("tcp", fmt.Sprintf(":%d", nodeConfig.Ports[ourRank]), tlsConfig)
+							c, err := tls.Dial("tcp", nodeConfig.Addr, tlsConfig)
 							if err != nil {
 								return err
 							}
 							conn = c
 						} else {
-							c, err := net.Dial("tcp", fmt.Sprintf(":%d", nodeConfig.Ports[ourRank]))
+							c, err := net.Dial("tcp", nodeConfig.Addr)
 							if err != nil {
 								return err
 							}
@@ -201,7 +192,83 @@ func (c *ServerConn) Establish(conf *config.Config) error {
 						return nil
 					},
 				); err != nil {
+					slog.Error("Failed to dial a connection",
+						"err", err,
+						"nodeId", nodeId,
+						"nodeAddr", nodeConfig.Addr,
+					)
 					errChan <- err
+					return
+				}
+			}
+
+			// Send our ID to the other party.
+			encoder := gob.NewEncoder(conn)
+			if err := encoder.Encode(conf.OurNodeId); err != nil {
+				slog.Error("Failed to send our ID to other node")
+				errChan <- err
+				return
+			}
+
+			// Receive other ID from the other party.
+			decoder := gob.NewDecoder(conn)
+			var otherId string
+			if err := decoder.Decode(&otherId); err != nil {
+				slog.Error("Failed to receive other ID into our other node")
+				errChan <- err
+				return
+			}
+
+			// Get other node's config.
+			otherConfig := conf.Nodes[otherId]
+			if otherConfig == nil {
+				slog.Error("Other node is not in config",
+					"nodeId", otherId,
+				)
+				errChan <- errors.New("Other node is not in config")
+				return
+			}
+
+			if conf.PeerSecurity == config.PeerSecurityTLS {
+				state := conn.(*tls.Conn).ConnectionState()
+
+				if len(state.PeerCertificates) == 0 {
+					slog.Warn("No peer certificate presented",
+						"nodeId", otherId,
+					)
+					errChan <- errors.New("No peer certificate presented")
+					return
+				}
+
+				if otherConfig.PeerTLSCert != nil {
+					// Verify pinned certificate.
+					if !bytes.Equal(state.PeerCertificates[0].Raw, otherConfig.PeerTLSCert.Raw) {
+						slog.Warn("Failed to verify pinned peer certificate",
+							"nodeId", otherId,
+						)
+						errChan <- errors.New("Failed to verify pinned peer certificate")
+						return
+					}
+				} else {
+					// Verify certificate according to roots.
+
+					// Build intermediate pool.
+					intermediates := x509.NewCertPool()
+					for _, cert := range state.PeerCertificates[1:] {
+						intermediates.AddCert(cert)
+					}
+
+					// TODO Verify with server name.
+					if _, err := state.PeerCertificates[0].Verify(x509.VerifyOptions{
+						Intermediates: intermediates,
+					}); err != nil {
+						slog.Warn("Failed to verify peer certificate",
+							"err", err,
+							"nodeId", otherId,
+						)
+						errChan <- err
+						return
+					}
 				}
 			}
 
@@ -210,7 +277,7 @@ func (c *ServerConn) Establish(conf *config.Config) error {
 				nodeId string
 				conn   net.Conn
 			}{
-				nodeId: nodeId,
+				nodeId: otherId,
 				conn:   conn,
 			}
 		}(nodeId, nodeConfig)

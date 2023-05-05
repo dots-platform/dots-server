@@ -1,8 +1,12 @@
 ---
+peer_bind_addr:
+peer_port: 51000
 peer_security: tls
 peer_tls_cert_file: snakeoil-cert.pem
 peer_tls_cert_key_file: snakeoil-key.pem
 
+grpc_bind_addr:
+grpc_port: 50051
 grpc_security: none
 grpc_tls_cert_file: snakeoil-cert.pem
 grpc_tls_cert_key_file: snakeoil-key.pem
@@ -11,12 +15,10 @@ file_storage_dir: ./files
 
 nodes:
   node1:
-    addr: 0.0.0.0:50051
-    ports: [51000, 51001]
+    addr: localhost:51000
     peer_tls_cert_file: snakeoil-cert.pem
   node2:
-    addr: 0.0.0.0:50052
-    ports: [52000]
+    addr: localhost:51001
     peer_tls_cert_file: snakeoil-cert.pem
 
 apps:
