@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 
 	"github.com/avast/retry-go"
@@ -258,8 +259,11 @@ func (c *ServerConn) Establish(conf *config.Config) error {
 						intermediates.AddCert(cert)
 					}
 
-					// TODO Verify with server name.
+					// Get domain name.
+					hostname, _, _ := strings.Cut(otherConfig.Addr, ":")
+
 					if _, err := state.PeerCertificates[0].Verify(x509.VerifyOptions{
+						DNSName:       hostname,
 						Intermediates: intermediates,
 					}); err != nil {
 						slog.Warn("Failed to verify peer certificate",
