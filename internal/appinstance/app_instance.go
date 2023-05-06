@@ -35,6 +35,7 @@ type AppInstance struct {
 	config     *config.Config
 	serverComm *serverconn.ServerComm
 
+	cmd                    *exec.Cmd
 	controlSocket          *os.File
 	controlSocketSendMutex sync.Mutex
 	controlSocketRecvMutex sync.Mutex
@@ -155,6 +156,7 @@ func Spawn(conf *config.Config, appPath string, appName string, serverComm *serv
 		config:     conf,
 		serverComm: serverComm,
 
+		cmd:           cmd,
 		controlSocket: controlSocket,
 
 		requests:        make(map[uuid.UUID]*AppRequest),
@@ -188,9 +190,13 @@ func (instance *AppInstance) NewRequest(ctx context.Context, requestId uuid.UUID
 		instance: instance,
 		done:     make(chan appResult),
 	}
-
 	instance.requests[requestId] = req
+
 	instance.pendingRequests <- req
 
 	return req, nil
+}
+
+func (instance *AppInstance) Wait() error {
+	return instance.cmd.Wait()
 }

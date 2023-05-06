@@ -3,6 +3,7 @@ package dotsservergrpc
 import (
 	"context"
 	"encoding/gob"
+	"sync"
 
 	"github.com/dtrust-project/dotspb/go/dotspb"
 	"golang.org/x/exp/slog"
@@ -19,7 +20,8 @@ type DotsServerGrpc struct {
 	controlComm *serverconn.ServerComm
 	config      *config.Config
 
-	apps map[string]*appinstance.AppInstance
+	apps      map[string]*appinstance.AppInstance
+	appsMutex sync.RWMutex
 
 	dotspb.UnimplementedDecExecServer
 }
@@ -37,15 +39,52 @@ func init() {
 	gob.Register(appCommId{})
 }
 
-func NewDotsServerGrpc(nodeId string, config *config.Config) (*DotsServerGrpc, error) {
+func (server *DotsServerGrpc) spawnInstance(conf *config.Config, appName string, appComm *serverconn.ServerComm) error {
+	appConfig := conf.Apps[appName]
+
+	appLog := slog.With(
+		"appName", appName,
+		"appPath", appConfig.Path,
+	)
+
+	server.appsMutex.Lock()
+	defer server.appsMutex.Unlock()
+
+	instance, err := appinstance.Spawn(conf, appConfig.Path, appName, appComm)
+	if err != nil {
+		appLog.Error("Failed to construct application instance", "err", err)
+		return err
+	}
+
+	server.apps[appName] = instance
+
+	// Spawn watchdog goroutine to restart app as needed.
+	go func() {
+		if err := instance.Wait(); err != nil {
+			appLog.Warn("Application exited with error", "err", err)
+		} else {
+			appLog.Warn("Application exited without error", "err", err)
+		}
+		appLog.Warn("Restarting application instance")
+
+		if err := server.spawnInstance(conf, appName, appComm); err != nil {
+			appLog.Error("Failed to restart application instance", "err", err)
+			return
+		}
+	}()
+
+	return nil
+}
+
+func NewDotsServerGrpc(nodeId string, conf *config.Config) (*DotsServerGrpc, error) {
 	server := &DotsServerGrpc{
-		config: config,
+		config: conf,
 
 		apps: make(map[string]*appinstance.AppInstance),
 	}
 
 	// Establish server-to-server connection.
-	if err := server.conns.Establish(config); err != nil {
+	if err := server.conns.Establish(conf); err != nil {
 		slog.Error("Failed to establish server-to-server connection", "err", err)
 		return nil, err
 	}
@@ -61,23 +100,17 @@ func NewDotsServerGrpc(nodeId string, config *config.Config) (*DotsServerGrpc, e
 	slog.Info("Server connections established")
 
 	// Spawn application instances.
-	for appName, appConfig := range config.Apps {
+	for appName := range conf.Apps {
 		appComm, err := server.conns.Register(context.Background(), appCommId{appName})
 		if err != nil {
 			slog.Error("Failed to establish application communicator", "err", err)
 			return nil, err
 		}
 
-		instance, err := appinstance.Spawn(config, appConfig.Path, appName, appComm)
-		if err != nil {
-			slog.Error("Failed to construct application instance", "err", err,
-				"appName", appName,
-				"appPath", appConfig.Path,
-			)
+		if err := server.spawnInstance(conf, appName, appComm); err != nil {
+			slog.Error("Failed to construct application instance", "err", err)
 			return nil, err
 		}
-
-		server.apps[appName] = instance
 	}
 
 	slog.Info("Spawned application instances")

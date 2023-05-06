@@ -10,6 +10,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 
+	"github.com/dtrust-project/dots-server/internal/appinstance"
 	"github.com/dtrust-project/dots-server/internal/util"
 )
 
@@ -45,10 +46,19 @@ func (s *DotsServerGrpc) Exec(ctx context.Context, app *dotspb.App) (*dotspb.Res
 	))
 
 	// Look up app instance.
-	appInstance, ok := s.apps[app.GetAppName()]
-	if !ok {
-		util.LoggerFromContext(ctx).Error("App config present but app not found")
-		return nil, grpc.Errorf(codes.NotFound, "App with name not found")
+	var appInstance *appinstance.AppInstance
+	if err := func() error {
+		s.appsMutex.RLock()
+		defer s.appsMutex.RUnlock()
+		instance, ok := s.apps[app.GetAppName()]
+		if !ok {
+			util.LoggerFromContext(ctx).Error("App config present but app not found")
+			return grpc.Errorf(codes.NotFound, "App with name not found")
+		}
+		appInstance = instance
+		return nil
+	}(); err != nil {
+		return nil, err
 	}
 
 	util.LoggerFromContext(ctx).Debug("Executing appliation request")
