@@ -28,7 +28,7 @@ fi
 
 i=$first
 while [ "$i" -le "$last" ]; do
-    go run ./cmd/dotsserver -config server_conf.yml -node_id "node$i" -listen_offset "$i" "$@" &
+    go run ./cmd/dotsserver -config server_conf.yml -node_id "node$i" -listen_offset "$i" "$@" 2>&1 | sed -E "s/^/[node$i] /" &
     pids="$pids $!"
     i=$(( i + 1 ))
 done
