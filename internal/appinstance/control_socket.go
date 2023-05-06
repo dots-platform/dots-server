@@ -198,7 +198,8 @@ func (instance *AppInstance) handleMsgRecvControlMsg(ctx context.Context, req *A
 		}
 
 		respMsg := controlMsg{
-			Type: controlMsgTypeMsgRecvResp,
+			Type:      controlMsgTypeMsgRecvResp,
+			RequestId: req.Id,
 		}
 		if err := instance.sendControlMsg(ctx, &respMsg, payload); err != nil {
 			util.LoggerFromContext(ctx).Error("Error sending MSG_RECV response data", "err", err)
