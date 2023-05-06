@@ -2,6 +2,7 @@ package serverconn
 
 import (
 	"encoding/gob"
+	"errors"
 	"sync"
 
 	"github.com/google/uuid"
@@ -73,7 +74,10 @@ func (c *ServerComm) Recv(nodeId string, tag any) (any, error) {
 		}
 		recvChan = r
 	}()
-	data := <-recvChan
+	data, ok := <-recvChan
+	if !ok {
+		return nil, errors.New("Server communicator is closed")
+	}
 
 	return data, nil
 }
