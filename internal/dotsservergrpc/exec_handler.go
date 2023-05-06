@@ -3,7 +3,6 @@ package dotsservergrpc
 import (
 	"context"
 	"encoding/binary"
-	"encoding/gob"
 
 	"github.com/dtrust-project/dotspb/go/dotspb"
 	"github.com/google/uuid"
@@ -13,14 +12,6 @@ import (
 	"github.com/dtrust-project/dots-server/internal/appinstance"
 	"github.com/dtrust-project/dots-server/internal/util"
 )
-
-type execBarrierTag struct {
-	InstanceId uuid.UUID
-}
-
-func init() {
-	gob.Register(execBarrierTag{})
-}
 
 func (s *DotsServerGrpc) Exec(ctx context.Context, app *dotspb.App) (*dotspb.Result, error) {
 	ctx = util.ContextWithLogger(ctx, util.LoggerFromContext(ctx).With(
