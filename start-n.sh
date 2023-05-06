@@ -3,17 +3,18 @@
 set -eu
 
 usage() {
-    echo "Usage: $0 <num servers> [-- [args...]]"
+    echo "Usage: $0 <first node index> <last node index> [-- [args...]]"
 }
 
-if [ $# -lt 1 ]; then
+if [ $# -lt 2 ]; then
     usage
     exit 1
 fi
 
 set -x
 
-N=$1
+first=$1
+last=$2
 
 pids=
 trap 'kill $pids 2>/dev/null' INT QUIT TERM EXIT
@@ -25,9 +26,9 @@ if [ "$#" -ge 1 ]; then
     shift
 fi
 
-i=0
-while [ "$i" -lt "$N" ]; do
-    go run ./cmd/dotsserver -config server_conf.yml -node_id "node$(( i + 1 ))" -listen_offset "$i" "$@" &
+i=$first
+while [ "$i" -le "$last" ]; do
+    go run ./cmd/dotsserver -config server_conf.yml -node_id "node$i" -listen_offset "$i" "$@" 2>&1 | sed -E "s/^/[node$i] /" &
     pids="$pids $!"
     i=$(( i + 1 ))
 done

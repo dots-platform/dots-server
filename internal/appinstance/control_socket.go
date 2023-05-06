@@ -191,7 +191,11 @@ func (instance *AppInstance) handleMsgRecvControlMsg(ctx context.Context, req *A
 			util.LoggerFromContext(ctx).Error("Failed to receive", "err", err)
 			return
 		}
-		payload := recvPayload.([]byte)
+		payload, ok := recvPayload.([]byte)
+		if !ok {
+			util.LoggerFromContext(ctx).Error("Received message was not byte slice")
+			return
+		}
 
 		respMsg := controlMsg{
 			Type: controlMsgTypeMsgRecvResp,
