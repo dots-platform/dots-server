@@ -16,8 +16,7 @@ set -x
 first=$1
 last=$2
 
-pids=
-trap 'kill $pids 2>/dev/null' INT QUIT TERM EXIT
+trap "trap '' TERM && kill 0 2>/dev/null" INT QUIT TERM EXIT
 
 while [ "$#" -ge 1 ] && [ "$1" != '--' ]; do
     shift
@@ -26,10 +25,11 @@ if [ "$#" -ge 1 ]; then
     shift
 fi
 
+make -j cmd/dotsserver/dotsserver
+
 i=$first
 while [ "$i" -le "$last" ]; do
-    go run ./cmd/dotsserver -config server_conf.yml -node_id "node$i" -listen_offset "$i" "$@" 2>&1 | sed -E "s/^/[node$i] /" &
-    pids="$pids $!"
+    ./cmd/dotsserver/dotsserver -config server_conf.yml -node_id "node$i" -listen_offset "$i" "$@" 2>&1 | sed -E "s/^/[node$i] /" &
     i=$(( i + 1 ))
 done
 
