@@ -122,17 +122,15 @@ func (c *ServerConn) Establish(conf *config.Config) error {
 	c.config = conf
 
 	// Start listener.
-	var tlsConfig *tls.Config
 	var listener net.Listener
 	if conf.PeerSecurity == config.PeerSecurityTLS {
-		// TODO Add server name to config somehow to authenticate server
-		// name as part of TLS connection.
-		tlsConfig = &tls.Config{
+		serverTlsConfig := &tls.Config{
 			Certificates:       []tls.Certificate{conf.PeerTLSCert},
 			ClientAuth:         tls.RequireAnyClientCert,
 			InsecureSkipVerify: true,
 		}
-		l, err := tls.Listen("tcp", fmt.Sprintf("%s:%d", conf.PeerBindAddr, conf.PeerPort), tlsConfig)
+
+		l, err := tls.Listen("tcp", fmt.Sprintf("%s:%d", conf.PeerBindAddr, conf.PeerPort), serverTlsConfig)
 		if err != nil {
 			slog.Error("Failed to listen for TLS connections", "err", err)
 			return err
@@ -160,25 +158,35 @@ func (c *ServerConn) Establish(conf *config.Config) error {
 		}
 
 		go func(nodeId string, nodeConfig *config.NodeConfig) {
-			ourRank := conf.OurNodeRank
-			otherRank := conf.NodeRanks[nodeId]
-
 			var conn net.Conn
-			if ourRank < otherRank {
-				// Act as listener for higher ranks.
-				c, err := listener.Accept()
-				if err != nil {
-					slog.Error("Failed to accept a connection", "err", err)
-					errChan <- err
-					return
-				}
-				conn = c
-			} else {
+			var otherId string
+			if conf.OurNodeRank > conf.NodeRanks[nodeId] {
 				// Act as dialer for lower ranks.
 				if err := retry.Do(
 					func() error {
 						if conf.PeerSecurity == config.PeerSecurityTLS {
-							c, err := tls.Dial("tcp", nodeConfig.Addr, tlsConfig)
+							clientTlsConfig := &tls.Config{
+								Certificates: []tls.Certificate{conf.PeerTLSCert},
+							}
+							// If there is no pinned cert, use DNS name
+							// authentication. Else, set InsecureSkipVerify and
+							// verify the pinned certificate ourselves.
+							if nodeConfig.PeerTLSCert != nil {
+								clientTlsConfig.InsecureSkipVerify = true
+								clientTlsConfig.VerifyPeerCertificate = func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
+									if !bytes.Equal(rawCerts[0], nodeConfig.PeerTLSCert.Raw) {
+										slog.Warn("Failed to verify pinned peer certificate",
+											"nodeId", nodeId,
+										)
+										return errors.New("Failed to verify pinned peer certificate")
+									}
+									return nil
+								}
+							} else {
+								clientTlsConfig.ServerName, _, _ = strings.Cut(nodeConfig.Addr, ":")
+							}
+
+							c, err := tls.Dial("tcp", nodeConfig.Addr, clientTlsConfig)
 							if err != nil {
 								return err
 							}
@@ -201,77 +209,87 @@ func (c *ServerConn) Establish(conf *config.Config) error {
 					errChan <- err
 					return
 				}
-			}
 
-			// Send our ID to the other party.
-			encoder := gob.NewEncoder(conn)
-			if err := encoder.Encode(conf.OurNodeId); err != nil {
-				slog.Error("Failed to send our ID to other node")
-				errChan <- err
-				return
-			}
-
-			// Receive other ID from the other party.
-			decoder := gob.NewDecoder(conn)
-			var otherId string
-			if err := decoder.Decode(&otherId); err != nil {
-				slog.Error("Failed to receive other ID into our other node")
-				errChan <- err
-				return
-			}
-
-			// Get other node's config.
-			otherConfig := conf.Nodes[otherId]
-			if otherConfig == nil {
-				slog.Error("Other node is not in config",
-					"nodeId", otherId,
-				)
-				errChan <- errors.New("Other node is not in config")
-				return
-			}
-
-			if conf.PeerSecurity == config.PeerSecurityTLS {
-				state := conn.(*tls.Conn).ConnectionState()
-
-				if len(state.PeerCertificates) == 0 {
-					slog.Warn("No peer certificate presented",
-						"nodeId", otherId,
-					)
-					errChan <- errors.New("No peer certificate presented")
+				// Send our ID to the server.
+				encoder := gob.NewEncoder(conn)
+				if err := encoder.Encode(conf.OurNodeId); err != nil {
+					slog.Error("Failed to send our ID to other node")
+					errChan <- err
 					return
 				}
 
-				if otherConfig.PeerTLSCert != nil {
-					// Verify pinned certificate.
-					if !bytes.Equal(state.PeerCertificates[0].Raw, otherConfig.PeerTLSCert.Raw) {
-						slog.Warn("Failed to verify pinned peer certificate",
+				otherId = nodeId
+			} else {
+				// Act as listener for higher ranks.
+				c, err := listener.Accept()
+				if err != nil {
+					slog.Error("Failed to accept a connection", "err", err)
+					errChan <- err
+					return
+				}
+				conn = c
+
+				// Receive other ID from the other client.
+				decoder := gob.NewDecoder(conn)
+				if err := decoder.Decode(&otherId); err != nil {
+					slog.Error("Failed to receive other ID into our other node")
+					errChan <- err
+					return
+				}
+
+				// Get other node's config.
+				otherConfig := conf.Nodes[otherId]
+				if otherConfig == nil {
+					slog.Error("Other node is not in config",
+						"nodeId", otherId,
+					)
+					errChan <- errors.New("Other node is not in config")
+					return
+				}
+
+				if conf.PeerSecurity == config.PeerSecurityTLS {
+					state := conn.(*tls.Conn).ConnectionState()
+
+					if len(state.PeerCertificates) == 0 {
+						slog.Warn("No peer certificate presented",
 							"nodeId", otherId,
 						)
-						errChan <- errors.New("Failed to verify pinned peer certificate")
+						errChan <- errors.New("No peer certificate presented")
 						return
 					}
-				} else {
-					// Verify certificate according to roots.
 
-					// Build intermediate pool.
-					intermediates := x509.NewCertPool()
-					for _, cert := range state.PeerCertificates[1:] {
-						intermediates.AddCert(cert)
-					}
+					if otherConfig.PeerTLSCert != nil {
+						// Verify pinned certificate.
+						if !bytes.Equal(state.PeerCertificates[0].Raw, otherConfig.PeerTLSCert.Raw) {
+							slog.Warn("Failed to verify pinned peer certificate",
+								"nodeId", otherId,
+							)
+							errChan <- errors.New("Failed to verify pinned peer certificate")
+							return
+						}
+					} else {
+						// Verify certificate according to roots.
 
-					// Get domain name.
-					hostname, _, _ := strings.Cut(otherConfig.Addr, ":")
+						// Build intermediate pool.
+						intermediates := x509.NewCertPool()
+						for _, cert := range state.PeerCertificates[1:] {
+							intermediates.AddCert(cert)
+						}
 
-					if _, err := state.PeerCertificates[0].Verify(x509.VerifyOptions{
-						DNSName:       hostname,
-						Intermediates: intermediates,
-					}); err != nil {
-						slog.Warn("Failed to verify peer certificate",
-							"err", err,
-							"nodeId", otherId,
-						)
-						errChan <- err
-						return
+						// Get domain name.
+						hostname, _, _ := strings.Cut(otherConfig.Addr, ":")
+
+						if _, err := state.PeerCertificates[0].Verify(x509.VerifyOptions{
+							DNSName:       hostname,
+							Intermediates: intermediates,
+						}); err != nil {
+							slog.Warn("Failed to verify peer certificate",
+								"err", err,
+								"nodeId", otherId,
+							)
+							errChan <- err
+							return
+						}
 					}
 				}
 			}
