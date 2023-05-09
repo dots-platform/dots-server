@@ -5,20 +5,17 @@ import (
 	"errors"
 	"sync"
 
-	"github.com/google/uuid"
 	"golang.org/x/exp/slog"
 )
 
 type serverMsg struct {
-	Type      MsgType
-	SubtypeId uuid.UUID
-	Tag       any
-	Data      any
+	CommId any
+	Tag    any
+	Data   any
 }
 
 type ServerComm struct {
-	msgType   MsgType
-	subtypeId uuid.UUID
+	commId    any
 	recvBuf   map[string]map[any]chan any
 	recvMutex sync.Mutex
 	conn      *ServerConn
@@ -39,10 +36,9 @@ func (c *ServerComm) Send(nodeId string, tag any, data any) error {
 	msgLog.Debug("Sending server message")
 
 	if err := c.conn.encoders[nodeId].Encode(&serverMsg{
-		Type:      c.msgType,
-		SubtypeId: c.subtypeId,
-		Tag:       tag,
-		Data:      data,
+		CommId: c.commId,
+		Tag:    tag,
+		Data:   data,
 	}); err != nil {
 		msgLog.Error("Failed to send server message", "err", err)
 		return err
