@@ -6,7 +6,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path"
@@ -106,33 +105,19 @@ func Spawn(conf *config.Config, appPath string, appName string, serverComm *serv
 	}
 	go func() {
 		defer stdout.Close()
-		reader := bufio.NewReader(stdout)
-		for {
-			line, _, err := reader.ReadLine()
-			if err != nil {
-				if errors.Is(err, io.EOF) {
-					break
-				}
-				util.LoggerFromContext(ctx).Error("Failed reading application stdout", "err", err)
-				break
-			}
-			fmt.Printf("[%s stdout] %s\n", appName, line)
+		scanner := bufio.NewScanner(stdout)
+		scanner.Split(bufio.ScanLines)
+		for scanner.Scan() {
+			fmt.Printf("[%s stdout] %s\n", appName, scanner.Text())
 		}
 	}()
 	stderr, err := cmd.StderrPipe()
 	go func() {
 		defer stderr.Close()
-		reader := bufio.NewReader(stderr)
-		for {
-			line, _, err := reader.ReadLine()
-			if err != nil {
-				if errors.Is(err, io.EOF) {
-					break
-				}
-				util.LoggerFromContext(ctx).Error("Failed reading application stderr", "err", err)
-				break
-			}
-			fmt.Printf("[%s stderr] %s\n", appName, line)
+		scanner := bufio.NewScanner(stderr)
+		scanner.Split(bufio.ScanLines)
+		for scanner.Scan() {
+			fmt.Printf("[%s stderr] %s\n", appName, scanner.Text())
 		}
 	}()
 	if err := cmd.Start(); err != nil {
