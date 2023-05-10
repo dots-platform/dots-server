@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path"
 	"sync"
+	"sync/atomic"
 	"syscall"
 
 	"github.com/google/uuid"
@@ -39,6 +40,7 @@ type AppInstance struct {
 	controlSocket          *os.File
 	controlSocketSendMutex sync.Mutex
 	controlSocketRecvMutex sync.Mutex
+	controlSocketMsgCounter atomic.Uint64
 
 	requests        map[uuid.UUID]*AppRequest
 	pendingRequests chan *AppRequest

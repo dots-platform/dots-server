@@ -55,17 +55,19 @@ func (t controlMsgType) String() string {
 }
 
 type controlMsg struct {
+	MsgId      uint64
+	RespMsgId  uint64
 	Type       controlMsgType
-	_          uint16
+	_          [2]byte
 	PayloadLen uint32
 	RequestId  uuid.UUID
-	_          [8]byte
-	Data       [32]byte
+	_          [24]byte
+	Data       [64]byte
 }
 
 func init() {
-	if binary.Size(&controlMsg{}) != 64 {
-		panic("Control message length must be 64 bytes long")
+	if binary.Size(&controlMsg{}) != 128 {
+		panic("Control message length must be 128 bytes long")
 	}
 }
 
@@ -106,6 +108,8 @@ func (instance *AppInstance) sendFile(file *os.File) error {
 func (instance *AppInstance) sendControlMsg(ctx context.Context, msg *controlMsg, payload []byte) error {
 	instance.controlSocketSendMutex.Lock()
 	defer instance.controlSocketSendMutex.Unlock()
+
+	msg.MsgId = instance.controlSocketMsgCounter.Add(1)
 
 	// Send header.
 	msg.PayloadLen = uint32(len(payload))
@@ -198,8 +202,8 @@ func (instance *AppInstance) handleMsgRecvControlMsg(ctx context.Context, req *A
 		}
 
 		respMsg := controlMsg{
+			RespMsgId: msg.MsgId,
 			Type:      controlMsgTypeMsgRecvResp,
-			RequestId: req.Id,
 		}
 		if err := instance.sendControlMsg(ctx, &respMsg, payload); err != nil {
 			util.LoggerFromContext(ctx).Error("Error sending MSG_RECV response data", "err", err)
@@ -268,6 +272,7 @@ func (instance *AppInstance) handleReqAcceptControlMsg(ctx context.Context, req 
 
 		// Write response with request input as payload.
 		respMsg := controlMsg{
+			RespMsgId: msg.MsgId,
 			Type: controlMsgTypeReqAcceptResp,
 		}
 		instance.sendControlMsg(ctx, &respMsg, reqInputBytes)
